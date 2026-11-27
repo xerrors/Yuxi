@@ -12,9 +12,6 @@ from test.integration.services.agent_input_fixtures import (
     SCOPE,
 )
 from test.integration.services.agent_input_fixtures import (
-    input_workdir_binding as _binding,
-)
-from test.integration.services.agent_input_fixtures import (
     queue_inputs as _queue_inputs,
 )
 from test.integration.services.agent_input_fixtures import (
@@ -23,7 +20,6 @@ from test.integration.services.agent_input_fixtures import (
 from test.integration.services.agent_input_fixtures import (
     start_input_run as _start,
 )
-from yuxi.modules.agents.services.run_lifecycle import settle_run
 from yuxi.api.dependencies.auth import get_db
 from yuxi.api.errors import domain_error_handler
 from yuxi.api.routers.public_v1.agents.auth import require_public_context
@@ -43,6 +39,9 @@ from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.scope import ActorScope
 from yuxi.modules.agents.services import checkpoint_messages as messages
 from yuxi.modules.agents.services import input_config, inputs, runs, scheduler, threads, turns
+from yuxi.modules.agents.services.run_lifecycle import settle_run
+from yuxi.modules.workspace.paths import user_workspace_dir
+from yuxi.modules.workspace.services import projects
 from yuxi.shared.errors import DomainError, StateConflictError
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
@@ -128,6 +127,63 @@ async def test_http_input_snapshot_respects_thread_status(sessions, status):
     async with sessions() as db:
         assert (await SessionRepository(db).get_session_by_thread_id("input-thread")).status == status
         assert (await db.get(AgentInput, accepted["input_id"])).status == "pending"
+
+
+async def test_missing_workdir_blocks_continue_and_promote_but_allows_cancel(sessions):
+    """删除目录后保留已接收的队列，用户仍能取消原输入。"""
+    accepted = await _send(sessions, "queued before delete", "follow_up")
+    (user_workspace_dir(SCOPE.uid) / "projects/input-project").rmdir()
+    async with sessions() as db:
+        with pytest.raises(StateConflictError) as continued:
+            await threads.continue_queue(db=db, scope=SCOPE, thread_id="input-thread", idempotency_key="continue-missing")
+        assert continued.value.code == "session_workdir_unavailable"
+        with pytest.raises(StateConflictError) as promoted:
+            await threads.promote_input(
+                db=db, scope=SCOPE, thread_id="input-thread", input_id=accepted["input_id"], idempotency_key="promote-missing"
+            )
+        assert promoted.value.code == "session_workdir_unavailable"
+        assert (await SessionRepository(db).get_session_by_thread_id("input-thread")).queue_paused
+        assert (await db.get(AgentInput, accepted["input_id"])).kind == "follow_up"
+        assert await db.scalar(select(func.count()).select_from(AgentRun)) == 0
+        await threads.cancel_input(
+            db=db, scope=SCOPE, thread_id="input-thread", input_id=accepted["input_id"], idempotency_key="cancel-missing"
+        )
+    async with sessions() as db:
+        assert (await db.get(AgentInput, accepted["input_id"])).status == "cancelled"
+
+
+async def test_missing_workdir_blocks_resume_waitpoint(sessions):
+    """删除目录后拒绝恢复等待点，等待点与当前 Run 保持不变。"""
+    run = await _start(sessions)
+    async with sessions() as db:
+        turn = await db.get(AgentTurn, run.turn_id)
+        stored_run = await db.get(AgentRun, run.id)
+        turn.status = "waiting"
+        turn.waitpoint = {
+            "id": "resume-wait",
+            "run_id": run.id,
+            "kind": "approval",
+            "calls": [{"call_id": "call-1", "allowed_decisions": ["approve"]}],
+        }
+        stored_run.status = "interrupted"
+        await db.commit()
+    (user_workspace_dir(SCOPE.uid) / "projects/input-project").rmdir()
+    async with sessions() as db:
+        with pytest.raises(StateConflictError) as missing:
+            await turns.resume_turn(
+                db=db,
+                scope=SCOPE,
+                thread_id="input-thread",
+                turn_id=run.turn_id,
+                waitpoint_id="resume-wait",
+                response={"type": "approval", "decisions": [{"call_id": "call-1", "decision": "approve"}]},
+                idempotency_key="resume-missing",
+            )
+        assert missing.value.code == "session_workdir_unavailable"
+    async with sessions() as db:
+        stored = await db.get(AgentTurn, run.turn_id)
+        assert stored.status == "waiting" and stored.current_run_id == run.id
+        assert await db.scalar(select(func.count()).select_from(AgentRun)) == 1
 
 
 async def test_promote_keeps_original_identity_and_priority_while_paused(sessions):
@@ -269,7 +325,7 @@ async def test_consume_failure_rolls_back_projection_and_ownership(sessions):
         session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
         session.queue_paused = False
         with pytest.raises(ValueError, match="不支持"):
-            await scheduler.claim_next_input(db=db, agent_session=session, binding=_binding())
+            await scheduler.claim_next_input(db=db, agent_session=session)
         await db.rollback()
     async with sessions() as db:
         assert await db.scalar(select(func.count()).select_from(Message)) == 0
@@ -277,14 +333,101 @@ async def test_consume_failure_rolls_back_projection_and_ownership(sessions):
         assert (await db.get(AgentInput, first["input_id"])).status == "pending"
 
 
+async def test_automatic_dispatch_keeps_input_pending_while_workdir_missing(sessions):
+    """领取前删除目录时保留原 Input，目录恢复后再消费。"""
+    receipt = await _send(sessions, "排队输入", mode="follow_up")
+    path = user_workspace_dir(SCOPE.uid) / "projects/input-project"
+    path.rmdir()
+    async with sessions() as db:
+        session = await SessionRepository(db).get_session_by_thread_id("input-thread")
+        session.queue_paused = False
+        await db.commit()
+
+    await scheduler.recover_pending_dispatches()
+    async with sessions() as db:
+        item = await db.get(AgentInput, receipt["input_id"])
+        assert item.status == "pending" and item.turn_id is None and item.consumed_run_id is None
+        assert await db.scalar(select(func.count()).select_from(Message)) == 0
+        assert await db.scalar(select(func.count()).select_from(AgentRun)) == 0
+
+    path.mkdir()
+    await scheduler.recover_pending_dispatches()
+    async with sessions() as db:
+        item = await db.get(AgentInput, receipt["input_id"])
+        run = await db.get(AgentRun, item.consumed_run_id)
+        assert item.status == "consumed" and run.turn_id == item.turn_id
+        assert (await AgentInputRepository(db).list_messages(item.id))[0].content == "排队输入"
+
+
+async def test_active_steer_is_not_eligible_while_workdir_missing(sessions):
+    """已经接收的 steer 不接管当前 Run，恢复目录后仍指向原输入。"""
+    from yuxi.modules.agents.services.run_lifecycle import lock_run_lifecycle
+
+    current = await _start(sessions)
+    receipt = await _send(sessions, "等待接管", mode="steer")
+    path = user_workspace_dir(SCOPE.uid) / "projects/input-project"
+    path.rmdir()
+    assert not await runs.should_yield_for_steer(current.id)
+    async with sessions() as db:
+        locked = await lock_run_lifecycle(db, run_id=current.id, allow_steer=True)
+        assert locked.steer_batch == []
+        assert locked.run.status == "running" and locked.turn.current_run_id == current.id
+        assert (await db.get(AgentInput, receipt["input_id"])).status == "pending"
+
+    path.mkdir()
+    assert await runs.should_yield_for_steer(current.id)
+    async with sessions() as db:
+        locked = await lock_run_lifecycle(db, run_id=current.id, allow_steer=True)
+        assert [item.id for item in locked.steer_batch] == [receipt["input_id"]]
+
+
+@pytest.mark.parametrize("occupied", [False, True], ids=["storage-error", "late-occupant"])
+async def test_implicit_workdir_creation_failure_does_not_commit_session_or_initial_input(sessions, monkeypatch, occupied):
+    """目录建不成时回滚会话、初始 Input 和回执，重试可以重新创建。"""
+    create_workdir = projects.create_managed_workdir
+
+    occupied_path = None
+
+    def fail_creation(uid, path):
+        """模拟存储错误，或在分配后、创建前放入一个带字节的已有目录。"""
+        nonlocal occupied_path
+        if not occupied:
+            raise OSError("test directory creation failure")
+        create_workdir(uid, path)
+        occupied_path = user_workspace_dir(uid) / path / "keep.txt"
+        occupied_path.write_bytes(b"existing file")
+        create_workdir(uid, path)
+
+    arguments = dict(
+        scope=SCOPE,
+        agent_slug="main",
+        thread_id="workdir-creation-thread",
+        idempotency_key="workdir-creation",
+        messages=[build_chat_input_message("first message")],
+    )
+    monkeypatch.setattr(projects, "create_managed_workdir", fail_creation)
+    async with sessions() as db:
+        error = StateConflictError if occupied else OSError
+        with pytest.raises(error, match="已被占用" if occupied else "test directory creation failure"):
+            await inputs.create_thread(db=db, **arguments)
+        await db.rollback()
+    async with sessions() as db:
+        assert await SessionRepository(db).get_session_by_thread_id(arguments["thread_id"]) is None
+        assert await db.scalar(select(func.count()).select_from(AgentInput)) == 0
+        assert await db.scalar(select(func.count()).select_from(AgentInputReceipt)) == 0
+        monkeypatch.setattr(projects, "create_managed_workdir", create_workdir)
+        created = await inputs.create_thread(db=db, **arguments)
+        assert created["input_id"]
+    if occupied:
+        assert occupied_path.read_bytes() == b"existing file"
+
+
 async def test_empty_session_freezes_system_default_before_first_input(sessions, monkeypatch):
     """创建后的默认模型与 Agent 修改不影响首个输入，投递前事务已提交。"""
-    from dataclasses import replace
     from unittest.mock import AsyncMock
 
     defaults = {"default_model": "test:original-default"}
     monkeypatch.setattr(input_config, "system_options", SimpleNamespace(get=AsyncMock(return_value=defaults)))
-    monkeypatch.setattr(inputs, "resolve_session_workdir_binding", AsyncMock(return_value=replace(_binding(), directory_mode="linked")))
     async with sessions() as db:
         agent = await db.scalar(select(Agent).where(Agent.slug == "main"))
         agent.config_json = {"context": {"model": "", "system_prompt": "ORIGINAL"}}
@@ -393,11 +536,11 @@ async def test_safe_handoff_consumes_batch_in_same_turn_with_current_config(sess
         await SessionRepository(db).lock_session_by_thread_id("input-thread")
         run = await db.get(AgentRun, current.id)
         settled = await settle_run(db=db, run=run, worker_id="owner", status="completed", token_usage=None)
-        assert settled.status == "yielded" and settled.next_dispatch.run_id
+        assert settled.status == "yielded" and settled.next_run_id
         await db.commit()
     async with sessions() as db:
         old = await db.get(AgentRun, current.id)
-        next_run = await db.get(AgentRun, settled.next_dispatch.run_id)
+        next_run = await db.get(AgentRun, settled.next_run_id)
         assert old.status == "yielded"
         assert old.runtime_cleanup_pending, "yielded 必须保留旧 Run 的环境清理责任"
         assert next_run.turn_id == current.turn_id and next_run.resume_from_run_id == current.id
@@ -422,7 +565,7 @@ async def test_steer_successor_waits_for_durable_runtime_cleanup(sessions, monke
         # 独立构造待清理状态，使领取门禁的负向案例不依赖终态写入实现。
         run.runtime_cleanup_pending = True
         await db.commit()
-    successor_id = settled.next_dispatch.run_id
+    successor_id = settled.next_run_id
     async with sessions() as db:
         _, acquired = await AgentRunRepository(db).mark_running(successor_id, worker_id="next-owner", lease_seconds=60)
         assert not acquired, "接续 Run 不能先于旧 Run 的清理确认执行"
@@ -553,8 +696,7 @@ async def test_steer_before_first_model_is_saved_as_yielded_not_failed(sessions,
                 idempotency_key="cancel-S3",
             )
 
-    async def dispatch(target):
-        run_id = target.run_id
+    async def dispatch(run_id):
         """投递时验证接续 Run 已提交，避免用通知冒充消费事实。"""
         async with sessions() as db:
             run = await db.get(AgentRun, run_id)

@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createPinia, setActivePinia } from 'pinia'
 import { createTestServer } from '../helpers/createTestServer.js'
 
-test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread', async () => {
+test('Web 空对话走产品入口，消息、等待恢复与队列控制沿用 Public Thread', async () => {
   const saved = new Map()
   globalThis.localStorage = {
     getItem: (key) => saved.get(key) ?? null,
@@ -13,7 +13,7 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
   const calls = []
   globalThis.fetch = async (url, options) => {
     calls.push({ url: String(url), options })
-    const body = String(url).endsWith('/sessions')
+    const body = url === '/api/agent/threads'
       ? {
           object: 'agent.session', id: 'thread-1', status: 'idle', agent: { id: 'agent-1', model: null },
           yuxi: { title: '新对话', project_id: 'project-1', archived: false,
@@ -44,7 +44,7 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
     assert.equal(thread.object, 'agent.session')
     assert.equal(thread.status, 'idle')
     assert.ok(!('thread_id' in thread.yuxi))
-    assert.equal(calls[0].url, '/api/v1/agents/sessions')
+    assert.equal(calls[0].url, '/api/agent/threads')
     assert.equal(calls[0].options.headers['Idempotency-Key'], 'create-key')
     assert.equal(JSON.parse(calls[0].options.body).agent_id, 'agent-1')
 

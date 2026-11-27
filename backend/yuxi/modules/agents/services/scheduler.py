@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
 
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,20 +19,12 @@ from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.services.run_creation import create_turn_run
-from yuxi.modules.workspace.paths import ensure_bound_user_workdir
-from yuxi.modules.workspace.services.bindings import WorkdirBinding, resolve_session_workdir_binding
+from yuxi.modules.workspace.services.bindings import resolve_session_workdir_binding, session_workdir_is_available
+from yuxi.modules.workspace.services.quota import workspace_over_quota
 
 
-@dataclass(frozen=True, slots=True)
-class Dispatch:
-    """记录 owning transaction 已创建、尚待提交投递的 Run。"""
-
-    run_id: str
-    binding: WorkdirBinding
-
-
-async def claim_next_input(*, db: AsyncSession, agent_session: Session, binding: WorkdirBinding | None = None) -> Dispatch | None:
-    """在已锁 Thread 上领取优先队头，原子建立 Turn 与首段 Run。"""
+async def claim_next_input(*, db: AsyncSession, agent_session: Session) -> str | None:
+    """在已锁 Thread 上校验并领取优先队头，返回同事务创建的首段 Run ID。"""
     if agent_session.status != "active" or agent_session.queue_paused:
         return None
     if await AgentRunRepository(db).has_thread_cleanup(agent_session.thread_id):
@@ -48,21 +39,24 @@ async def claim_next_input(*, db: AsyncSession, agent_session: Session, binding:
     if await turn_repo.lock_active_for_thread(thread_id=agent_session.thread_id, uid=agent_session.uid, app_id=agent_session.app_id):
         return None
 
+    from yuxi.modules.agents.services.attachments import readable_ready_prefix
+
     input_repo = AgentInputRepository(db)
     batch = await input_repo.ready_batch(thread_id=agent_session.thread_id, uid=agent_session.uid, app_id=agent_session.app_id)
-    if not batch:
+    # 协作输入属于正在执行的任务；超额时保留用户新任务的队头等待下次派发。
+    if not batch or (batch[0].source != "cooperation" and await workspace_over_quota(db, agent_session.uid)):
+        return None
+    batch = await readable_ready_prefix(db=db, batch=batch)
+    if not batch or not await session_workdir_is_available(agent_session=agent_session, db=db):
         return None
     head = batch[0]
-    if binding is None:
-        binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=agent_session.uid, db=db)
-
     turn_id = str(uuid.uuid4())
     turn = await turn_repo.create(turn_id=turn_id, thread_id=agent_session.thread_id, uid=agent_session.uid, app_id=agent_session.app_id)
     run = await create_turn_run(db=db, agent_session=agent_session, turn=turn, source=head, api_key_id=head.api_key_id, input_batch=batch)
     run_id = run.id
     messages = await input_repo.consume(inputs=batch, turn_id=turn_id, run_id=run_id)
     await AgentRunRepository(db).set_input_message(run_id, messages[0].id)
-    return Dispatch(run_id=run_id, binding=binding)
+    return run_id
 
 
 async def dispatch_next_input(*, uid: str, agent_slug: str, thread_id: str) -> bool:
@@ -74,14 +68,14 @@ async def dispatch_next_input(*, uid: str, agent_slug: str, thread_id: str) -> b
         from yuxi.modules.agents.services.attachments import prepare_input_attachments
 
         # 归档只停止执行；已接收文件仍要完成提交，领取门禁由 claim_next_input 执行。
-        binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=uid, db=db)
-        for input_item in await AttachmentRepository(db).list_preparing_inputs(thread_id, uid, agent_session.app_id):
-            if not await prepare_input_attachments(db=db, agent_session=agent_session, input_item=input_item, binding=binding):
-                # 保留准备错误和来源；普通队列仍受优先队头约束。
-                continue
-        dispatch = await claim_next_input(db=db, agent_session=agent_session, binding=binding)
+        preparing = await AttachmentRepository(db).list_preparing_inputs(thread_id, uid, agent_session.app_id)
+        if preparing:
+            binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=uid, db=db)
+            for input_item in preparing:
+                await prepare_input_attachments(db=db, input_item=input_item, binding=binding)
+        run_id = await claim_next_input(db=db, agent_session=agent_session)
 
-    delivered = await deliver(dispatch) if dispatch is not None else True
+    delivered = await deliver(run_id) if run_id is not None else True
     from yuxi.modules.agents.services.attachments import cleanup_prepared_sources
 
     async with pg_manager.get_async_session_context() as db:
@@ -89,16 +83,14 @@ async def dispatch_next_input(*, uid: str, agent_slug: str, thread_id: str) -> b
     return delivered
 
 
-async def deliver(dispatch: Dispatch) -> bool:
-    """提交后物化目录并发布 Run；队列失败保留 pending，由恢复扫描按原身份补投。"""
-    if dispatch.binding.materialize_managed:
-        ensure_bound_user_workdir(dispatch.binding.uid, dispatch.binding.workdir_path)
+async def deliver(run_id: str) -> bool:
+    """发布已提交的 Run；队列失败保留 pending，由恢复扫描按原身份补投。"""
     from yuxi.modules.agents.services.transport import enqueue_agent_run
 
     try:
-        await enqueue_agent_run(dispatch.run_id)
+        await enqueue_agent_run(run_id)
     except Exception:
-        logger.exception("Failed to publish committed AgentRun: {}", dispatch.run_id)
+        logger.exception("Failed to publish committed AgentRun: {}", run_id)
         return False
     return True
 
@@ -145,8 +137,7 @@ async def recover_pending_dispatches() -> None:
                 )
                 if current is None or current.status != "pending" or turn is None or turn.current_run_id != run.id:
                     continue
-                binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=run.uid, db=db)
-            if not await deliver(Dispatch(run_id=run.id, binding=binding)):
+            if not await deliver(run.id):
                 failures += 1
         except Exception:
             failures += 1

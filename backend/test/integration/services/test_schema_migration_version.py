@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -34,7 +35,10 @@ from test.integration.support.postgres_schema import (
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 
 
-@pytest.mark.parametrize("business,knowledge", [(2, 1), (3, 1), (3, 2), (4, 1), (4, 2), (5, 1), (5, 2), (6, 1), (6, 2), (7, 1), (8, 2), (1, 1), (1, 3)])
+@pytest.mark.parametrize(
+    "business,knowledge",
+    [(2, 1), (3, 1), (3, 2), (4, 1), (4, 2), (5, 1), (5, 2), (6, 1), (6, 2), (7, 1), (7, 2), (9, 2), (16, 2), (1, 1), (1, 3)],
+)
 async def test_incompatible_schema_is_rejected_without_modifying_data(monkeypatch, business, knowledge):
     """历史及未来版本不再隐式升级，数据与两个版本均保持原值。"""
     schema, admin, engine, manager = await _create_isolated_manager("pytest_old_business")
@@ -60,6 +64,64 @@ async def test_incompatible_schema_is_rejected_without_modifying_data(monkeypatc
         async with engine.connect() as conn:
             assert await conn.scalar(text("SELECT password_hash FROM users WHERE uid='existing'")) == "original"
             assert await conn.scalar(text("SELECT count(*) FROM oidc_identities")) == 0
+    finally:
+        await _drop_isolated_schema(schema, admin, engine)
+
+
+async def test_legacy_business_8_without_usage_table_cannot_start_or_replay():
+    """同编号的旧开发库缺少用量表时拒绝接管，保留原数据。"""
+    from yuxi.migrations.workspace_usage import upgrade_workspace_usage
+
+    schema, admin, engine, manager = await _create_isolated_manager("pytest_legacy_business_8")
+    try:
+        await create_business_tables(manager)
+        await create_schema_version_table(manager)
+        await record_schema_version(manager, "business", 8)
+        await record_schema_version(manager, "knowledge", 2)
+        async with engine.begin() as conn:
+            await conn.execute(text("DROP TABLE workspace_usage"))
+            await conn.execute(
+                text(
+                    "INSERT INTO users (username, uid, password_hash, role, login_failed_count, is_deleted) "
+                    "VALUES ('old','old','original','user',0,0)"
+                )
+            )
+        for entrypoint in (require_current_schema, schema_bootstrap.initialize_schema, upgrade_workspace_usage):
+            with pytest.raises(RuntimeError, match="workspace_usage is missing"):
+                await entrypoint(manager)
+        assert await get_schema_versions(manager) == {"business": 8, "knowledge": 2}
+        async with engine.connect() as conn:
+            assert await conn.scalar(text("SELECT password_hash FROM users WHERE uid='old'")) == "original"
+            assert await conn.scalar(text("SELECT to_regclass('workspace_usage')")) is None
+    finally:
+        await _drop_isolated_schema(schema, admin, engine)
+
+
+@pytest.mark.parametrize("business", [7, 8])
+async def test_same_business_version_without_recent_files_is_rejected(business):
+    """同编号开发分支缺最近文件表时，不得应用迁移或通过启动校验。"""
+    from yuxi.migrations.workspace_usage import upgrade_workspace_usage
+
+    schema, admin, engine, manager = await _create_isolated_manager("pytest_other_business_branch")
+    try:
+        await create_schema_version_table(manager)
+        await record_schema_version(manager, "business", business)
+        await record_schema_version(manager, "knowledge", 2)
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE TABLE users (uid VARCHAR(128) PRIMARY KEY)"))
+            await conn.execute(text("INSERT INTO users VALUES ('legacy')"))
+            if business == 8:
+                await conn.execute(text("CREATE TABLE workspace_usage (uid VARCHAR(128) PRIMARY KEY)"))
+        with pytest.raises(RuntimeError, match="workspace_recent_files is missing"):
+            await upgrade_workspace_usage(manager)
+        if business == 8:
+            for entrypoint in (require_current_schema, schema_bootstrap.initialize_schema):
+                with pytest.raises(RuntimeError, match="workspace_recent_files is missing"):
+                    await entrypoint(manager)
+        assert await get_schema_versions(manager) == {"business": business, "knowledge": 2}
+        async with engine.connect() as conn:
+            assert await conn.scalar(text("SELECT uid FROM users")) == "legacy"
+            assert await conn.scalar(text("SELECT to_regclass('workspace_usage') IS NOT NULL")) == (business == 8)
     finally:
         await _drop_isolated_schema(schema, admin, engine)
 
@@ -185,8 +247,8 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
         } <= input_columns
         assert "conversation_thread_id" not in input_columns
         assert "agent_state_view" in session_columns
-        assert "workspace_recent_files" in tables
-        assert BUSINESS_SCHEMA_VERSION == 7
+        assert {"workspace_recent_files", "workspace_usage"} <= tables
+        assert BUSINESS_SCHEMA_VERSION == 8
         assert KNOWLEDGE_SCHEMA_VERSION == 2
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
@@ -618,7 +680,7 @@ async def test_workspace_recent_files_upgrade_preserves_users_and_is_idempotent(
             return
 
         await upgrade_workspace_recent_files(manager)
-        await require_current_schema(manager)
+        assert await get_schema_versions(manager) == {"business": 7, "knowledge": 2}
         async with engine.begin() as conn:
             assert await conn.scalar(text("SELECT count(*) FROM workspace_recent_files")) == 0
             await conn.execute(text("""INSERT INTO workspace_recent_files VALUES ('existing', '[{"path":"/old.txt"}]')"""))
@@ -627,5 +689,57 @@ async def test_workspace_recent_files_upgrade_preserves_users_and_is_idempotent(
             assert await conn.scalar(text("SELECT entries->0->>'path' FROM workspace_recent_files WHERE uid='existing'")) == "/old.txt"
             await conn.execute(text("DELETE FROM users WHERE uid='existing'"))
             assert await conn.scalar(text("SELECT count(*) FROM workspace_recent_files")) == 0
+    finally:
+        await _drop_isolated_schema(schema, admin, engine)
+
+
+async def test_workspace_usage_migration_preserves_snapshots_on_replay():
+    """验证 6→7→8，保留最近文件历史并可重复执行用量迁移。"""
+    from yuxi.migrations.workspace_recent_files import upgrade_workspace_recent_files
+    from yuxi.migrations.workspace_usage import upgrade_workspace_usage
+    from yuxi.modules.workspace.repositories.usage import save_usage
+
+    schema, admin, engine, manager = await _create_isolated_manager("pytest_usage_upgrade")
+    try:
+        await create_schema_version_table(manager)
+        await record_schema_version(manager, "business", 6)
+        await record_schema_version(manager, "knowledge", 2)
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE TABLE users (uid VARCHAR(128) PRIMARY KEY)"))
+            await conn.execute(text("INSERT INTO users VALUES ('existing')"))
+        with pytest.raises(RuntimeError, match="需要 business 7、knowledge 2"):
+            await upgrade_workspace_usage(manager)
+        assert await get_schema_versions(manager) == {"business": 6, "knowledge": 2}
+        async with engine.connect() as conn:
+            assert await conn.scalar(text("SELECT to_regclass('workspace_usage')")) is None
+
+        await upgrade_workspace_recent_files(manager)
+        async with engine.begin() as conn:
+            await conn.execute(text("""INSERT INTO workspace_recent_files VALUES ('existing', '[{"path":"/kept.txt"}]')"""))
+        await upgrade_workspace_usage(manager)
+        async with engine.begin() as conn:
+            await conn.execute(text("INSERT INTO workspace_usage VALUES ('existing', 4294967296, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"))
+        await upgrade_workspace_usage(manager)
+
+        await require_current_schema(manager)
+        async with engine.begin() as conn:
+            assert await conn.scalar(text("SELECT entries FROM workspace_recent_files WHERE uid='existing'")) == [{"path": "/kept.txt"}]
+            measured = await conn.scalar(text("SELECT measured_at FROM workspace_usage WHERE uid='existing'"))
+            read_usage = text("SELECT used_bytes, measured_at, last_attempt_at FROM workspace_usage WHERE uid=:uid")
+            failed = measured + timedelta(seconds=2)
+            await save_usage(conn, "existing", None, failed)
+            row = (await conn.execute(read_usage, {"uid": "existing"})).one()
+            assert tuple(row) == (4294967296, measured, failed)
+            # 时钟回拨不应导致新扫描的低用量无法覆盖已过时的超额快照。
+            earlier_success = measured - timedelta(seconds=1)
+            await save_usage(conn, "existing", 0, earlier_success)
+            row = (await conn.execute(read_usage, {"uid": "existing"})).one()
+            assert tuple(row) == (0, earlier_success, earlier_success)
+            await conn.execute(text("INSERT INTO users VALUES ('new-user')"))
+            await save_usage(conn, "new-user", None, failed)
+            await save_usage(conn, "new-user", 8589934592, earlier_success)
+            row = (await conn.execute(read_usage, {"uid": "new-user"})).one()
+            assert tuple(row) == (8589934592, earlier_success, earlier_success)
+        assert await get_schema_versions(manager) == {"business": 8, "knowledge": 2}
     finally:
         await _drop_isolated_schema(schema, admin, engine)

@@ -59,10 +59,10 @@ async def test_short_prefix_collision_keeps_unmaterialized_project_bindings_dist
 
         async with factory() as db:
             bindings = set((await db.scalars(select(Project.workdir_path).where(Project.uid == uid))).all())
-        assert bindings == {"projects/20261015/a1b2c3", "projects/20261015/a1b2c3-1"}
+        assert bindings == {"agents/tasks/2026-10-15/new-chat-a1b2c3", "agents/tasks/2026-10-15/new-chat-a1b2c3-1"}
         assert not paths.user_workspace_dir(uid).exists()
         for binding in bindings:
-            paths.ensure_bound_user_workdir(uid, binding)
+            paths.create_managed_workdir(uid, binding)
             target = paths.user_workdir_host_dir(uid, binding)
             (target / "owner.txt").write_text(binding, encoding="utf-8")
         for binding in bindings:

@@ -333,7 +333,7 @@ const parsedData = computed(() => {
   &.sent {
     max-width: 85%;
     color: var(--gray-1000);
-    background-color: var(--main-50);
+    background-color: var(--main-20);
     align-self: flex-end;
     border-radius: 0.5rem;
     padding: 0.5rem 1rem;

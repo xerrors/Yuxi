@@ -96,7 +96,7 @@ test('审批模式保存完成前暂停发送，首条新输入使用已保存�
   assert.equal(await state.handleSendMessage(), false)
   assert.equal(await state.handleSendMessage({ text: '组件输入', fromWidget: true }), false)
   assert.deepEqual(sent, [])
-  thread.isStreaming = true
+  Object.assign(thread, { isStreaming: true, activeRunId: 'run', currentTurnId: 'turn' })
   state.userInput.value = ''
   assert.equal(state.shouldShowStopButton.value, true)
   assert.equal(state.isSendButtonDisabled.value, false, '保存审批模式期间仍可停止当前运行')

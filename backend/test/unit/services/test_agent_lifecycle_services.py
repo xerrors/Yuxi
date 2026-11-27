@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import pytest
 
 from yuxi.modules.agents.services.subscriptions import _Cursor, _parse_cursor
-from yuxi.modules.agents.services.scheduler import Dispatch, deliver
 from yuxi.modules.agents.services.turns import _summarize_turn_usage, _validate_resume_response
 from yuxi.shared.errors import DomainError, InvalidInputError
 
@@ -78,24 +77,6 @@ def test_waitpoint_rejects_unlisted_approval_decision():
             },
         )
     assert isinstance(error.value, InvalidInputError)
-
-
-@pytest.mark.asyncio
-async def test_dispatch_materializes_bound_workdir_before_publishing(monkeypatch):
-    """Run 已由事务创建后，目录物化先于同一个 Run 的队列投递。"""
-    calls = []
-    monkeypatch.setattr(
-        "yuxi.modules.agents.services.scheduler.ensure_bound_user_workdir",
-        lambda uid, path: calls.append(("workdir", uid, path)),
-    )
-
-    async def enqueue(run_id):
-        calls.append(("publish", run_id))
-
-    monkeypatch.setattr("yuxi.modules.agents.services.transport.enqueue_agent_run", enqueue)
-    binding = SimpleNamespace(materialize_managed=True, uid="user-1", workdir_path="projects/p-1")
-    await deliver(Dispatch(run_id="run-1", binding=binding))
-    assert calls == [("workdir", "user-1", "projects/p-1"), ("publish", "run-1")]
 
 
 @pytest.mark.asyncio

@@ -58,7 +58,7 @@
               /></template>
             </a-input>
           </div>
-          <div class="action-dropdown-list"><slot /></div>
+          <div class="action-dropdown-list"><slot :close-and-focus="closeAndFocus" /></div>
           <div v-if="$slots.footer" class="action-dropdown-footer"><slot name="footer" /></div>
         </div>
       </div>

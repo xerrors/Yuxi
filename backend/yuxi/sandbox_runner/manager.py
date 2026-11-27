@@ -20,6 +20,7 @@ from yuxi.infrastructure.filesystem import open_directory_fd
 from yuxi.modules.agents.repositories.sandbox import SandboxRepository
 from yuxi.modules.workspace.paths import normalize_workdir_path, workspace_uid_dirname
 from yuxi.modules.workspace.runtime_paths import PERSONAL_SKILLS_PATH, normalize_runtime_path
+from yuxi.modules.workspace.usage_changes import workspace_cleanup, workspace_mutation
 from yuxi.sandbox_runner.engine import DockerEngine, EngineError, ExecDeadlineExceeded
 from yuxi.sandbox_runner.settings import RunnerSettings
 from yuxi.shared.datetime import utc_now
@@ -215,24 +216,29 @@ class ContainerManager:
             with self._capacity_lock:
                 if self._running_count() >= self.settings.max_containers:
                     raise SandboxCapacityError("容器并发已达到部署上限")
-                config = self._container_config(uid=uid, run_id=run_id, owner=owner, workdir=normalized)
-                created = self.engine.create_container(name=self._container_name(run_id), config=config)
-                container_id = created["Id"]
-                try:
-                    self.engine.start_container(container_id)
-                    # HOME 为 tmpfs；必须在挂载完成后、接受用户命令前建立 CLI 入口。
-                    exit_code, _ = self.engine.run_probe(
-                        container_id,
-                        cmd=["/bin/sh", "-ec", f"mkdir -p /home/user/.agents && ln -s {PERSONAL_SKILLS_PATH} /home/user/.agents/skills"],
-                        env=[],
-                        workdir="/home/user",
-                        user=config["User"],
-                    )
-                    if exit_code != 0:
-                        raise SandboxError("个人 Skill 目录映射失败")
-                except Exception:
-                    self.engine.remove_container(container_id)
-                    raise
+                with workspace_mutation(uid, data_root=self.local_data_root):
+                    config = self._container_config(uid=uid, run_id=run_id, owner=owner, workdir=normalized)
+                    created = self.engine.create_container(name=self._container_name(run_id), config=config)
+                    container_id = created["Id"]
+                    try:
+                        self.engine.start_container(container_id)
+                        # HOME 为 tmpfs；必须在挂载完成后、接受用户命令前建立 CLI 入口。
+                        exit_code, _ = self.engine.run_probe(
+                            container_id,
+                            cmd=[
+                                "/bin/sh",
+                                "-ec",
+                                f"mkdir -p /home/user/.agents && ln -s {PERSONAL_SKILLS_PATH} /home/user/.agents/skills",
+                            ],
+                            env=[],
+                            workdir="/home/user",
+                            user=config["User"],
+                        )
+                        if exit_code != 0:
+                            raise SandboxError("个人 Skill 目录映射失败")
+                    except Exception:
+                        self.engine.remove_container(container_id)
+                        raise
             info = self.engine.inspect_container(container_id)
             if info is None or not self._container_running(info):
                 raise SandboxError("容器启动后未运行")
@@ -264,13 +270,14 @@ class ContainerManager:
             if self._running_count() >= self.settings.max_containers:
                 raise SandboxCapacityError("容器并发已达到部署上限")
             config["Labels"]["yuxi.expires_at"] = str(time.time() + 360)
-            created = self.engine.create_container(name=self._container_name(request_id), config=config)
-            container_id = created["Id"]
-            try:
-                self.engine.start_container(container_id)
-            except Exception:
-                self.engine.remove_container(container_id)
-                raise
+            with workspace_mutation(uid, data_root=self.local_data_root):
+                created = self.engine.create_container(name=self._container_name(request_id), config=config)
+                container_id = created["Id"]
+                try:
+                    self.engine.start_container(container_id)
+                except Exception:
+                    self.engine.remove_container(container_id)
+                    raise
 
         try:
             exec_id = self.engine.create_exec(
@@ -354,7 +361,8 @@ class ContainerManager:
         timer = None
         try:
             if stdin_local is not None and stdin_data is not None:
-                self._write_stdin(stdin_local, stdin_data)
+                with workspace_mutation(uid, data_root=self.local_data_root):
+                    self._write_stdin(stdin_local, stdin_data)
             executable = "/usr/bin/python3" if python else "/bin/bash"
             args = ["-c", command] if python else ["-lc", command]
             cmd = ["/usr/bin/python3", "-I", "-c", _EXEC_WRAPPER, stdin_path, str(timeout_seconds), executable, *args]
@@ -423,7 +431,8 @@ class ContainerManager:
             with self._exec_lock:
                 self._execs.pop(key, None)
             if stdin_local is not None:
-                self._delete_stdin_file(stdin_local)
+                with workspace_cleanup(uid, data_root=self.local_data_root):
+                    self._delete_stdin_file(stdin_local)
 
     def cancel_exec(self, *, uid: str, run_id: str, owner: str, command_id: str, raise_on_failure: bool = True) -> bool:
         """只杀掉带本次执行标识的容器内进程组。"""

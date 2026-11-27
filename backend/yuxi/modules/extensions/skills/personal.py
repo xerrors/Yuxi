@@ -23,6 +23,7 @@ from yuxi.modules.extensions.skills.package import (
 from yuxi.modules.extensions.skills.resolved import ResolvedSkill
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.paths import ensure_user_workspace, user_workspace_dir
+from yuxi.modules.workspace.usage_changes import workspace_cleanup, workspace_mutation
 
 PERSONAL_SKILL_SOURCE_TYPE = "personal"
 
@@ -106,7 +107,13 @@ async def delete_personal_skill(uid: str, slug: str) -> None:
     skill_dir = _resolve_personal_skill_dir(_personal_skills_root(uid), slug)
     if not skill_dir.is_dir():
         raise ValueError("个人 Skill 不存在")
-    await await_io(asyncio.to_thread(shutil.rmtree, skill_dir))
+
+    def delete() -> None:
+        """在用量变更标记内删除个人 Skill。"""
+        with workspace_cleanup(uid):
+            shutil.rmtree(skill_dir)
+
+    await await_io(asyncio.to_thread(delete))
 
 
 def _scan_personal_skills(uid: str) -> list[ResolvedSkill]:
@@ -137,29 +144,30 @@ def _install_personal_skill_dir_sync(
     expected_slug: str | None = None,
 ) -> ResolvedSkill:
     """将一个 Skill 原子复制到个人目录。"""
-    source_dir = source_dir.resolve()
-    root = _personal_skills_root(uid)
-    temp_target = root / f".install.tmp-{uuid.uuid4().hex[:8]}"
-    try:
-        metadata = copy_skill_snapshot(source_dir, temp_target, expected_slug=expected_slug)
-        slug = metadata["slug"]
-        target_dir = root / slug
-        if target_dir.exists() or target_dir.is_symlink():
-            raise ValueError(f"个人 Skill 源已存在同名 Skill: {slug}")
+    with workspace_mutation(uid):
+        source_dir = source_dir.resolve()
+        root = _personal_skills_root(uid)
+        temp_target = root / f".install.tmp-{uuid.uuid4().hex[:8]}"
         try:
-            directory_fd = open_directory_fd(root, ())
+            metadata = copy_skill_snapshot(source_dir, temp_target, expected_slug=expected_slug)
+            slug = metadata["slug"]
+            target_dir = root / slug
+            if target_dir.exists() or target_dir.is_symlink():
+                raise ValueError(f"个人 Skill 源已存在同名 Skill: {slug}")
             try:
-                publish_directory_fd(directory_fd, temp_target.name, directory_fd, target_dir.name)
-            finally:
-                os.close(directory_fd)
-        except OSError as exc:
-            if target_dir.exists():
-                raise ValueError(f"个人 Skill 源已存在同名 Skill: {slug}") from exc
-            raise
-    finally:
-        if temp_target.exists():
-            shutil.rmtree(temp_target, ignore_errors=True)
-    return _resolved_personal_skill(uid, root, metadata)
+                directory_fd = open_directory_fd(root, ())
+                try:
+                    publish_directory_fd(directory_fd, temp_target.name, directory_fd, target_dir.name)
+                finally:
+                    os.close(directory_fd)
+            except OSError as exc:
+                if target_dir.exists():
+                    raise ValueError(f"个人 Skill 源已存在同名 Skill: {slug}") from exc
+                raise
+        finally:
+            if temp_target.exists():
+                shutil.rmtree(temp_target, ignore_errors=True)
+        return _resolved_personal_skill(uid, root, metadata)
 
 
 def _resolved_personal_skill(uid: str, root: Path, metadata: dict[str, Any]) -> ResolvedSkill:
@@ -186,7 +194,9 @@ def _personal_skills_root(uid: str) -> Path:
     workspace = user_workspace_dir(uid)
     workspace_root = workspace.resolve()
     root = ensure_within_root((workspace / "agents" / "skills").resolve(), workspace_root, error_message="个人 Skill 路径越界")
-    root.mkdir(parents=True, exist_ok=True)
+    if not root.is_dir():
+        with workspace_mutation(uid):
+            root.mkdir(parents=True, exist_ok=True)
     return root
 
 

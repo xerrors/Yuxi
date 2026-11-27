@@ -76,20 +76,6 @@ class ProjectRepository:
         result = await self.db.scalars(select(Project.workdir_path).where(Project.uid == str(uid)))
         return set(result.all())
 
-    async def list_referenced_workdir_paths_for_user(self, uid: str) -> list[str]:
-        """仍被未删除会话绑定的 active Project Workdir 路径，供整目录删除保护使用。"""
-        stmt = (
-            select(Project.workdir_path)
-            .join(Session, Session.project_id == Project.id)
-            .where(
-                Project.uid == str(uid),
-                Project.status == "active",
-                or_(Session.status.is_(None), Session.status != "deleted"),
-            )
-            .distinct()
-        )
-        return list(await self.db.scalars(stmt))
-
     async def list_history_candidates(self, uid: str) -> list[tuple[Session, str]]:
         """列出可解析实际 Workdir 的普通历史对话。"""
         result = await self.db.execute(

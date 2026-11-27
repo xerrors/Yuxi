@@ -30,15 +30,18 @@ from yuxi.modules.identity.provider import require_provider_config
 from yuxi.modules.identity.security import AuthUtils
 from yuxi.modules.knowledge.mcp.auth import require_knowledge_delegation_config
 from yuxi.modules.schedules.service import claim_and_dispatch_due_jobs, recover_scheduled_dispatches
+from yuxi.modules.workspace.services.quota import get_workspace_quota_bytes, scan_workspace_usage
 from yuxi.workers.background_jobs import reconcile_and_publish_jobs
 
 _RECONCILIATION_TASK_KEY = "agent_run_reconciliation_task"
 _JOB_RECONCILIATION_TASK_KEY = "background_job_reconciliation_task"
 _SANDBOX_CLEANUP_TASK_KEY = "sandbox_cleanup_task"
 _CHECKPOINT_SWEEP_TASK_KEY = "checkpoint_sweep_task"
+_WORKSPACE_USAGE_TASK_KEY = "workspace_usage_task"
 
 CHECKPOINT_SWEEP_INTERVAL_SECONDS = 24 * 3600
 CHECKPOINT_SWEEP_SLOT_KEY = "yuxi:checkpoint-sweep:slot"
+WORKSPACE_USAGE_SCAN_INTERVAL_SECONDS = 300
 
 
 async def startup(ctx: dict) -> None:
@@ -52,6 +55,7 @@ async def startup(ctx: dict) -> None:
         require_knowledge_delegation_config()
     AuthUtils.require_security_secrets()
     require_provider_config()
+    get_workspace_quota_bytes()
     from yuxi.modules.agents.runtime.sandbox import check_sandbox_provider
 
     await check_sandbox_provider()
@@ -76,6 +80,7 @@ async def startup(ctx: dict) -> None:
     ctx[_JOB_RECONCILIATION_TASK_KEY] = asyncio.create_task(_reconcile_background_jobs_forever())
     ctx[_SANDBOX_CLEANUP_TASK_KEY] = asyncio.create_task(_reconcile_sandboxes_forever())
     ctx[_CHECKPOINT_SWEEP_TASK_KEY] = asyncio.create_task(_sweep_checkpoint_garbage_forever())
+    ctx[_WORKSPACE_USAGE_TASK_KEY] = asyncio.create_task(_scan_workspace_usage_forever())
 
 
 async def shutdown(ctx: dict) -> None:
@@ -87,6 +92,7 @@ async def shutdown(ctx: dict) -> None:
             ctx.pop(_JOB_RECONCILIATION_TASK_KEY, None),
             ctx.pop(_SANDBOX_CLEANUP_TASK_KEY, None),
             ctx.pop(_CHECKPOINT_SWEEP_TASK_KEY, None),
+            ctx.pop(_WORKSPACE_USAGE_TASK_KEY, None),
         ]
         reconciliation_tasks = [task for task in reconciliation_tasks if task is not None]
         for task in reconciliation_tasks:
@@ -115,6 +121,17 @@ async def _reconcile_agent_run_leases_forever() -> None:
     while True:
         await asyncio.sleep(RUN_RECONCILIATION_SECONDS)
         await _reconcile_agent_runs_once()
+
+
+async def _scan_workspace_usage_forever() -> None:
+    """独立于 ARQ 作业槽周期巡检，单轮异常后仍可继续。"""
+    while True:
+        try:
+            async with asyncio.timeout(3600):
+                await scan_workspace_usage()
+        except Exception:
+            logger.exception("个人空间用量巡检未完成")
+        await asyncio.sleep(WORKSPACE_USAGE_SCAN_INTERVAL_SECONDS)
 
 
 async def _reconcile_agent_runs_once() -> None:

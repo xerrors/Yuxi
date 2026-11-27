@@ -61,7 +61,7 @@ def manager(tmp_path_factory):
     other.write_text("other-user-secret\n", encoding="utf-8")
     (root / "skills" / "one" / "demo").mkdir(parents=True)
     (root / "skills" / "one" / "demo" / "SKILL.md").write_text("shared-skill\n", encoding="utf-8")
-    image = os.environ.get("SANDBOX_CONTAINER_IMAGE", "yuxi-sandbox:0.8.1.beta1")
+    image = os.environ.get("SANDBOX_CONTAINER_IMAGE", "yuxi-sandbox:0.8.1.beta2")
     digest = os.environ.get("SANDBOX_CONTAINER_IMAGE_DIGEST", "")
     run_uid = os.getuid() or 65534
     run_gid = os.getgid() or 65534
@@ -157,6 +157,44 @@ ps -eo pid,user,args
     skills = run(value, run_id, "cat /home/user/skills/demo/SKILL.md")
     assert skills["output"] == "shared-skill\n"
     value.remove_run(uid="one", run_id=run_id)
+
+
+def test_workspace_usage_marker_follows_real_container_lifecycle(manager, monkeypatch):
+    """容器启动单独登记其 UID，真实 Docker 状态区分运行和退出。"""
+    from types import SimpleNamespace
+
+    from yuxi.modules.workspace.usage_changes import acknowledge_workspace_change, pending_workspace_changes
+
+    value, root, workdir = manager
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(root))
+    for previous in pending_workspace_changes():
+        acknowledge_workspace_change(previous)
+    assert pending_workspace_changes() == []
+
+    provider = ContainerSandboxProvider(client=SimpleNamespace(list=lambda: value.list_containers()["containers"]))
+    run_id = str(uuid.uuid4())
+    try:
+        container = value.create(uid="one", run_id=run_id, owner="integration-owner", workdir="projects/demo")
+        (change,) = pending_workspace_changes()
+        assert change.uid == "one" and change.generation
+        assert provider.active_workspace_uids(["one", "two"]) == {"one"}
+        assert run(value, run_id, "printf sandbox > usage-proof.txt")["exit_code"] == 0
+        assert (workdir / "usage-proof.txt").read_bytes() == b"sandbox"
+        subprocess.run(
+            ["docker", "--host", f"unix://{value.settings.socket_path}", "stop", "--time", "1", container["id"]],
+            check=True,
+            capture_output=True,
+            timeout=10,
+        )
+        assert value.list_containers()["containers"][0]["state"] == "exited"
+        assert provider.active_workspace_uids(["one", "two"]) == {"one"}
+    finally:
+        value.remove_run(uid="one", run_id=run_id)
+
+    assert provider.active_workspace_uids(["one", "two"]) == set()
+    assert pending_workspace_changes() == [change]
+    acknowledge_workspace_change(change)
+    assert pending_workspace_changes() == []
 
 
 def test_inspect_proves_user_network_caps_and_resource_limits(manager):
@@ -578,7 +616,7 @@ def test_runner_http_contract_auth_lazy_exec_and_remove(tmp_path, monkeypatch, r
     (tmp_path / "shared" / "one" / "workspace" / "projects" / "demo").mkdir(parents=True)
     (tmp_path / "skills" / "one").mkdir(parents=True)
     monkeypatch.setenv("SANDBOX_RUNNER_TOKEN", "integration-token-1234567890")
-    monkeypatch.setenv("SANDBOX_CONTAINER_IMAGE", os.environ.get("SANDBOX_CONTAINER_IMAGE", "yuxi-sandbox:0.8.1.beta1"))
+    monkeypatch.setenv("SANDBOX_CONTAINER_IMAGE", os.environ.get("SANDBOX_CONTAINER_IMAGE", "yuxi-sandbox:0.8.1.beta2"))
     monkeypatch.setenv("SANDBOX_CONTAINER_IMAGE_DIGEST", os.environ.get("SANDBOX_CONTAINER_IMAGE_DIGEST", ""))
     monkeypatch.setenv("SANDBOX_CONTAINER_HOST_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("SANDBOX_CONTAINER_HOST_SKILL_DIR", str(tmp_path / "skills"))
@@ -665,7 +703,7 @@ def test_matches_plain_docker_exit_code_and_output(manager):
             "--rm",
             "--network",
             "none",
-            os.environ.get("SANDBOX_CONTAINER_IMAGE", "yuxi-sandbox:0.8.1.beta1"),
+            os.environ.get("SANDBOX_CONTAINER_IMAGE", "yuxi-sandbox:0.8.1.beta2"),
             "bash",
             "-lc",
             command,

@@ -79,14 +79,6 @@
           <Download :size="16" />
         </button>
         <button
-          v-if="showFullscreen && file"
-          class="modal-action-btn"
-          @click="openFullscreenPreview"
-          title="全屏预览"
-        >
-          <Maximize :size="16" />
-        </button>
-        <button
           v-if="showClose"
           class="modal-action-btn"
           @click="$emit('close')"
@@ -185,7 +177,7 @@
         {
           'is-editing': canEdit && editMode === 'edit',
           'is-iframe-preview': isHtmlFile && htmlPreviewMode === 'render',
-          'is-office-preview': officePreviewActive && !fullscreenPreviewVisible
+          'is-office-preview': officePreviewActive
         }
       ]"
     >
@@ -227,12 +219,10 @@
         <PdfPreview :url="file.previewUrl" class="pdf-preview" />
       </template>
       <template v-else-if="file?.previewType === 'office'">
-        <Teleport :to="fullscreenOfficeHost || 'body'" :disabled="!fullscreenOfficeHost">
-          <div v-if="!officePreviewActive" class="unsupported-preview">
-            当前文件暂不支持预览，请下载后查看
-          </div>
-          <OfficePreview v-else :file="file.previewFile" class="office-preview" @download="downloadPreviewFile" />
-        </Teleport>
+        <div v-if="!officePreviewActive" class="unsupported-preview">
+          当前文件暂不支持预览，请下载后查看
+        </div>
+        <OfficePreview v-else :file="file.previewFile" class="office-preview" @download="downloadPreviewFile" />
       </template>
       <template v-else-if="isHtmlFile && htmlPreviewMode === 'render'">
         <iframe
@@ -263,142 +253,17 @@
         <pre v-else>{{ JSON.stringify(file, null, 2) }}</pre>
       </template>
     </div>
-
-    <Teleport to="body">
-      <div v-if="fullscreenPreviewVisible && file" class="fullscreen-preview-overlay">
-        <div class="fullscreen-preview-actions">
-          <div v-if="isHtmlFile" class="preview-mode-switch fullscreen-preview-switch">
-            <button
-              class="preview-mode-btn"
-              :class="{ active: htmlPreviewMode === 'render' }"
-              @click="htmlPreviewMode = 'render'"
-              title="预览"
-            >
-              <Globe :size="16" />
-            </button>
-            <button
-              class="preview-mode-btn"
-              :class="{ active: htmlPreviewMode === 'source' }"
-              @click="htmlPreviewMode = 'source'"
-              title="源码"
-            >
-              <Code2 :size="16" />
-            </button>
-            <template v-if="htmlPreviewMode === 'render'">
-              <span class="preview-mode-divider"></span>
-              <button
-                class="preview-mode-btn"
-                :disabled="zoomOutDisabled"
-                @click="zoomHtmlPreview(-HTML_PREVIEW_SCALE_STEP)"
-                title="缩小"
-                aria-label="缩小"
-              >
-                <ZoomOut :size="14" />
-              </button>
-              <span class="html-preview-zoom-value" title="缩放比例"
-                >{{ htmlPreviewScalePercent }}%</span
-              >
-              <button
-                class="preview-mode-btn"
-                :disabled="zoomInDisabled"
-                @click="zoomHtmlPreview(HTML_PREVIEW_SCALE_STEP)"
-                title="放大"
-                aria-label="放大"
-              >
-                <ZoomIn :size="14" />
-              </button>
-            </template>
-          </div>
-          <button
-            v-if="file && (showDownload || officePreviewActive)"
-            class="modal-action-btn fullscreen-action-btn"
-            @click="downloadPreviewFile"
-            title="下载"
-          >
-            <Download :size="16" />
-          </button>
-          <button
-            class="modal-action-btn fullscreen-action-btn"
-            @click="closeFullscreenPreview"
-            title="关闭"
-          >
-            <X :size="16" />
-          </button>
-        </div>
-        <div class="fullscreen-preview-content">
-          <div
-            class="file-content fullscreen-file-content"
-            :class="{ 'is-office-preview': officePreviewActive }"
-          >
-            <template v-if="currentStatus === 'loading'">
-              <div class="unsupported-preview fullscreen-unsupported-preview" role="status" aria-label="正在加载预览">
-                <LoaderCircle class="preview-spinner" :size="20" aria-hidden="true" />
-              </div>
-            </template>
-            <template v-else-if="currentStatus === 'error'">
-              <div class="unsupported-preview error-preview fullscreen-unsupported-preview">
-                <CircleAlert :size="22" class="preview-error-icon" />
-                <span class="preview-error-text">{{ currentErrorMessage }}</span>
-              </div>
-            </template>
-            <template v-else-if="currentStatus === 'unsupported' || file?.supported === false">
-              <div class="unsupported-preview fullscreen-unsupported-preview">
-                {{ file?.message || '当前文件暂不支持预览，请下载后查看' }}
-              </div>
-            </template>
-            <template v-else-if="file?.previewType === 'image' && file?.previewUrl">
-              <div class="image-preview-wrapper fullscreen-image-preview-wrapper">
-                <img :src="file.previewUrl" :alt="filePath" class="image-preview" />
-              </div>
-            </template>
-            <template v-else-if="file?.previewType === 'pdf' && file?.previewUrl">
-              <PdfPreview :url="file.previewUrl" class="pdf-preview fullscreen-embed-preview" />
-            </template>
-            <div v-else-if="file?.previewType === 'office'" ref="fullscreenOfficeHost" class="fullscreen-office-host" />
-            <template v-else-if="isHtmlFile && htmlPreviewMode === 'render'">
-              <iframe
-                :key="`fullscreen-${htmlPreviewRenderKey}`"
-                class="html-preview fullscreen-embed-preview"
-                :srcdoc="htmlPreviewSrcdoc"
-                :title="filePath"
-                sandbox="allow-scripts"
-              />
-            </template>
-            <template v-else-if="isMarkdown">
-              <MarkdownPreview
-                :content="formatContent(file?.content)"
-                :resource-base-url="file?.resourceBaseUrl"
-              />
-            </template>
-            <template v-else>
-              <pre v-if="Array.isArray(file?.content)" class="file-content-pre">{{
-                formatContent(file.content)
-              }}</pre>
-              <pre
-                v-else-if="isCodePreview && typeof file?.content === 'string'"
-                :class="['file-content-pre', 'code-highlight', codeThemeClass]"
-              ><code class="hljs" v-html="highlightedCodeContent"></code></pre>
-              <pre v-else-if="typeof file?.content === 'string'" class="file-content-pre">{{
-                file.content
-              }}</pre>
-              <pre v-else>{{ JSON.stringify(file, null, 2) }}</pre>
-            </template>
-          </div>
-        </div>
-      </div>
-    </Teleport>
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, onDeactivated, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import {
   CircleAlert,
   Code2,
   Download,
   Globe,
   LoaderCircle,
-  Maximize,
   PanelRight,
   FilePen,
   Save,
@@ -452,10 +317,6 @@ const props = defineProps({
     default: true
   },
   showClose: {
-    type: Boolean,
-    default: false
-  },
-  showFullscreen: {
     type: Boolean,
     default: false
   },
@@ -531,7 +392,6 @@ const htmlPreviewMode = ref('render')
 const editMode = ref('preview')
 const draftContent = ref('')
 const lineWrapEnabled = ref(true)
-const fullscreenPreviewVisible = ref(false)
 const htmlPreviewRenderKey = ref(0)
 const htmlPreviewScale = ref(HTML_PREVIEW_DEFAULT_SCALE)
 const zoomInDisabled = computed(() => htmlPreviewScale.value >= HTML_PREVIEW_SCALE_MAX)
@@ -541,8 +401,6 @@ const displayFilePath = computed(() =>
   String(props.filePath || '').replace(/^\/home\/user\/workspace(?=\/|$)/, '~').replace(/^\//, '')
 )
 
-// 全屏移动当前渲染器，避免重开文件或丢失文档阅读位置。
-const fullscreenOfficeHost = ref(null)
 const officePreviewActive = computed(
   () => props.file?.previewType === 'office' && props.file?.previewFile instanceof File
 )
@@ -623,11 +481,92 @@ const serializeDoctype = (doctype) => {
   return `<!DOCTYPE ${doctype.name}${publicId}${systemId}>`
 }
 
+/** 让 srcdoc 同框架锚点留在预览内，并保留文档对默认导航的取消。 */
+function installHtmlPreviewAnchors() {
+  const pendingClicks = new WeakMap()
+  const afterWindowCapture = (event) => {
+    if (event.cancelBubble) pendingClicks.get(event)?.()
+  }
+  const refreshWindowCapture = () => {
+    // 用户激活前把观察器放到作者已经注册的 Window 捕获监听器之后。
+    window.removeEventListener('click', afterWindowCapture, true)
+    window.addEventListener('click', afterWindowCapture, true)
+  }
+  window.addEventListener('load', refreshWindowCapture, { once: true })
+  window.addEventListener('pointerdown', refreshWindowCapture, true)
+  window.addEventListener('keydown', refreshWindowCapture, true)
+
+  const getFragment = (link) => {
+    if (link.hasAttribute('download') || document.querySelector('base[href]')) return null
+    const target = link.getAttribute('target') || document.querySelector('base[target]')?.getAttribute('target')
+    if (target && target.toLowerCase() !== '_self') return null
+
+    // URL 解析只裁掉首尾 C0 控制字符和 ASCII 空格。
+    // eslint-disable-next-line no-control-regex
+    const href = link.getAttribute('href')?.replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '')
+    return href?.startsWith('#') ? href : null
+  }
+  window.addEventListener('click', (event) => {
+    if (
+      !event.cancelable ||
+      event.button !== 0 ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey
+    ) return
+
+    const path = event.composedPath()
+    const link = path.find((node) => node instanceof Element && node.matches('a[href], area[href]'))
+    if (!link) return
+
+    const listeners = new AbortController()
+    const followFragment = () => {
+      if (listeners.signal.aborted) return
+      listeners.abort()
+      pendingClicks.delete(event)
+      const href = getFragment(link)
+      if (!href || event.defaultPrevented) return
+      event.preventDefault()
+      window.location.assign(`about:srcdoc${href}`)
+    }
+
+    const afterDocument = (click) => {
+      const reachedWindow = click.currentTarget === window && click.eventPhase === Event.BUBBLING_PHASE
+      if (click === event && (click.cancelBubble || reachedWindow)) followFragment()
+    }
+    // 让文档监听器先运行。单独停止传播不会取消锚点的默认动作。
+    pendingClicks.set(event, followFragment)
+    for (const node of path) {
+      if (node !== window) node.addEventListener('click', afterDocument, { capture: true, signal: listeners.signal })
+      node.addEventListener('click', afterDocument, { signal: listeners.signal })
+    }
+
+    // 立即停止传播会跳过后续监听器。真实点击的微任务能在默认导航前读取取消结果。
+    const stop = event.stopImmediatePropagation
+    const stopImmediately = function () {
+      stop.call(this)
+      queueMicrotask(followFragment)
+    }
+    if (event.isTrusted) event.stopImmediatePropagation = stopImmediately
+    setTimeout(() => {
+      listeners.abort()
+      pendingClicks.delete(event)
+      if (event.stopImmediatePropagation === stopImmediately) delete event.stopImmediatePropagation
+    }, 0)
+  }, true)
+  document.currentScript.remove()
+}
+
 const buildHtmlPreviewSrcdoc = (content, scale = HTML_PREVIEW_DEFAULT_SCALE) => {
   const html = formatContent(content)
   if (!html.trim() || typeof DOMParser === 'undefined') return html
 
   const doc = new DOMParser().parseFromString(html, 'text/html')
+  // 预览脚本先于文档自己的 CSP 执行，文档原有脚本仍受其策略约束。
+  const script = doc.createElement('script')
+  script.textContent = `(${installHtmlPreviewAnchors.toString()})()`
+  doc.head.prepend(script)
   if (scale !== 1) {
     const style = doc.createElement('style')
     style.setAttribute('data-yuxi-html-preview-scale', String(scale))
@@ -686,15 +625,6 @@ const cancelEdit = () => {
   emit('cancel-edit')
 }
 
-const openFullscreenPreview = () => {
-  if (!props.file) return
-  fullscreenPreviewVisible.value = true
-}
-
-const closeFullscreenPreview = () => {
-  fullscreenPreviewVisible.value = false
-}
-
 watch(
   () => props.filePath,
   () => {
@@ -718,16 +648,6 @@ watch([() => props.filePath, () => props.file?.previewType, () => props.file?.co
   if (isHtmlFile.value) {
     htmlPreviewRenderKey.value += 1
   }
-})
-
-watch(fullscreenPreviewVisible, (visible) => {
-  document.body.style.overflow = visible ? 'hidden' : ''
-})
-
-onDeactivated(closeFullscreenPreview)
-
-onUnmounted(() => {
-  document.body.style.overflow = ''
 })
 </script>
 
@@ -1119,15 +1039,7 @@ onUnmounted(() => {
   flex-direction: column;
 }
 
-.is-office-preview .fullscreen-office-host {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.agent-file-preview.is-full-height .office-preview,
-.fullscreen-file-content .office-preview {
+.agent-file-preview.is-full-height .office-preview {
   flex: 1 1 auto;
   height: 100%;
   min-height: 0;
@@ -1184,88 +1096,5 @@ onUnmounted(() => {
   to {
     transform: rotate(360deg);
   }
-}
-
-.fullscreen-preview-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1200;
-  background: var(--gray-0);
-}
-
-.fullscreen-preview-actions {
-  position: fixed;
-  top: 16px;
-  right: 16px;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.fullscreen-preview-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  min-height: 40px;
-  padding: 4px;
-  border: 1px solid var(--gray-200);
-  border-radius: 999px;
-  background: var(--color-trans-light);
-  box-shadow: 0 10px 30px var(--shadow-4);
-  backdrop-filter: blur(10px);
-
-  .preview-mode-btn {
-    width: 32px;
-    height: 32px;
-    border-radius: 999px;
-  }
-}
-
-.fullscreen-action-btn {
-  width: 40px;
-  height: 40px;
-  border-radius: 999px;
-  background: var(--color-trans-light);
-  border: 1px solid var(--gray-200);
-  box-shadow: 0 10px 30px var(--shadow-4);
-  backdrop-filter: blur(10px);
-}
-
-.fullscreen-preview-content {
-  position: absolute;
-  inset: 0;
-  min-height: 0;
-}
-
-.fullscreen-file-content {
-  height: 100vh;
-  max-height: none;
-  min-height: 100vh;
-  padding: 0px;
-  border-radius: 0;
-}
-
-.fullscreen-image-preview-wrapper {
-  min-height: calc(100vh - 48px);
-  align-items: center;
-}
-
-.fullscreen-embed-preview {
-  height: 100vh; // 全屏时填满视口
-  min-height: 100vh; // 确保全屏时不塌陷
-  border-radius: 0px;
-}
-
-.fullscreen-unsupported-preview {
-  min-height: calc(100vh - 48px);
-}
-
-.fullscreen-file-content .file-content-pre.code-highlight code {
-  min-height: calc(100vh - 48px);
-}
-
-.fullscreen-file-content .image-preview {
-  max-height: calc(100vh - 48px);
 }
 </style>

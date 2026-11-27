@@ -119,18 +119,31 @@ class AttachmentRepository:
             )
         )
 
-    async def prepared_sources(self, thread_id) -> list[AgentAttachment]:
-        """就绪提交后清理临时来源；失败保留位置供恢复循环重试。"""
-        return list(
-            await self.db.scalars(
-                select(AgentAttachment)
-                .join(AgentInput, AgentInput.id == AgentAttachment.input_id)
-                .where(
-                    AgentInput.thread_id == thread_id,
-                    AgentAttachment.status == "ready",
-                    AgentAttachment.object_name.is_not(None),
-                )
-                .order_by(AgentAttachment.id)
-                .with_for_update(of=AgentAttachment)
+    async def prepared_sources(self, thread_id) -> list[tuple[AgentAttachment, str]]:
+        """在所属 Thread 锁下读取就绪附件的来源及 Input 状态。"""
+        rows = await self.db.execute(
+            select(AgentAttachment, AgentInput.status)
+            .join(AgentInput, AgentInput.id == AgentAttachment.input_id)
+            .where(
+                AgentInput.thread_id == thread_id,
+                AgentAttachment.status == "ready",
+                AgentAttachment.object_name.is_not(None),
+            )
+            .order_by(AgentAttachment.id)
+            .with_for_update(of=AgentAttachment)
+        )
+        return [(attachment, input_status) for attachment, input_status in rows]
+
+    async def prepared_files_for_inputs(self, input_ids: list[str]) -> dict[str, list[AgentAttachment]]:
+        """读取候选 Input 中仍有临时来源的就绪附件。"""
+        rows = await self.db.scalars(
+            select(AgentAttachment).where(
+                AgentAttachment.input_id.in_(input_ids),
+                AgentAttachment.status == "ready",
+                AgentAttachment.object_name.is_not(None),
             )
         )
+        result: dict[str, list[AgentAttachment]] = {}
+        for attachment in rows:
+            result.setdefault(attachment.input_id, []).append(attachment)
+        return result

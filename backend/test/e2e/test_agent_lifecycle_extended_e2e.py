@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import uuid
 
@@ -76,10 +77,11 @@ async def test_public_run_persists_preloaded_tool_and_model_audit(e2e_client, e2
         audits_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/audits", headers=e2e_headers)
         assert audits_response.status_code == 200, audits_response.text
         audits = [item for item in audits_response.json()["audits"] if item["run_id"] == run_id]
-        assert [item["type"] for item in audits] == ["human", "ai", "tool", "ai"]
-        assert audits[0]["input_id"] == created["input_id"] and audits[0]["input_position"] == 0
-        assert audits[0]["turn_id"] == turn_id
-        audits = audits[1:]
+        assert [item["type"] for item in audits] == ["human", "human", "ai", "tool", "ai"]
+        for position, audit in enumerate(audits[:2]):
+            assert audit["input_id"] == created["input_id"] and audit["input_position"] == position
+            assert audit["turn_id"] == turn_id
+        audits = audits[2:]
         assert [item["type"] for item in audits] == ["ai", "tool", "ai"]
         assert [item["sequence"] for item in audits] == sorted(item["sequence"] for item in audits)
         assert audits[1]["tool_call_id"] == TOOL_CALL_ID and audits[1]["tool_input"] == {"filepaths": []}
@@ -94,7 +96,7 @@ async def test_public_run_persists_preloaded_tool_and_model_audit(e2e_client, e2
                 SELECT input.id AS input_id, input.status AS input_status, input.turn_id AS input_turn_id,
                        input.consumed_run_id, turn.result_run_id, run.output_message_id,
                        output.run_id AS output_run_id, output.turn_id AS output_turn_id,
-                       output.content AS output_content, project.workdir_path, run.runtime_scope_id,
+                       output.content AS output_content, project.id AS project_id, project.workdir_path, run.runtime_scope_id,
                        run.manifest, run.manifest_fingerprint
                 FROM agent_runs run
                 JOIN agent_turns turn ON turn.id = run.turn_id
@@ -120,7 +122,9 @@ async def test_public_run_persists_preloaded_tool_and_model_audit(e2e_client, e2
             assert binding["output_message_id"] == turn["yuxi"]["output"][0]["yuxi"]["message_id"]
             assert binding["output_content"] == OUTPUT
             assert binding["runtime_scope_id"] == thread_id
-            assert str(binding["workdir_path"]).startswith("projects/")
+            expected_name = f"draft-quarterly-report-{binding['project_id'][:6]}"
+            assert re.fullmatch(rf"agents/tasks/\d{{4}}-\d{{2}}-\d{{2}}/{expected_name}", binding["workdir_path"])
+            assert await conn.fetchval("SELECT COUNT(*) FROM agent_inputs WHERE thread_id = $1", thread_id) == 1
 
             model_rows = await conn.fetch(
                 """
@@ -420,7 +424,10 @@ async def _create_thread(client: httpx.AsyncClient, headers: dict[str, str], slu
             "agent_id": slug,
             "title": make_test_session_title(tag),
             "agent": {"model": MODEL},
-            "input": [{"role": "user", "content": [{"type": "input_text", "text": f"只输出 {OUTPUT}"}]}],
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": " "}]},
+                {"role": "user", "content": [{"type": "input_text", "text": "Draft quarterly report"}]},
+            ],
         },
     )
     assert response.status_code == 201, response.text

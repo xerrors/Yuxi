@@ -37,7 +37,8 @@ async page => {
     else if (path.endsWith('/queue')) json = { inputs: [], status: 'ready' }
     else if (path.endsWith('/cooperation')) json = { sessions: [], members: [], edges: [] }
     else if (path.endsWith('/attachments')) json = { files: [], attachments: [] }
-    else if (path === '/api/projects' || path === '/api/mention/plugins') json = []
+    else if (path === '/api/projects') json = []
+    else if (path === '/api/mention/resources') json = {}
     else if (path.includes('/databases')) json = { databases: [] }
     else if (path.includes('/models')) json = { providers: [], models: [], data: [] }
     else if (path.endsWith('/feedback')) json = { items: [] }

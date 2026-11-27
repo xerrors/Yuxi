@@ -599,7 +599,7 @@ const saveAgent = async () => {
       shareConfigNeedsRepair.value = false
       captureProfileBaseline()
       emit('saved', { mode: 'edit', agent: updated })
-      message.success('智能体已保存')
+      message.success(payload.config_json ? '智能体配置已保存。新建对话时生效。' : '智能体已保存')
     } else {
       creatingRequest = true
       const created = await agentStore.createAgent(payload, createSkillFile.value)

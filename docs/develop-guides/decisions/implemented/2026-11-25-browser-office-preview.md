@@ -14,11 +14,11 @@ Owner：frontend/src/shared/ui/OfficePreview.vue
 
 产品预览返回 DOCX、PPTX、XLS、XLSX 原件，保留 30 MB 预览上限。响应用允许的扩展名确定媒体类型，标记为附件并禁止 MIME 嗅探。前端通过已鉴权的请求读取响应，把保留文件名的 `File` 交给浏览器渲染器。产品与 Public v1 共用产物读取端点及 Thread 授权。公开接口的 `preview=true` 对 DOCX、PPTX、XLS、XLSX 返回原件和对应的 Office MIME，客户端可按响应头选择渲染或保存文件。
 
-共享预览标题栏和渲染失败提示中的下载按钮复用已读取的 Office 原件。知识库详情的下载菜单继续请求原件下载接口。Workspace、Knowledge、Viewer 和产物预览共用预览内容准备逻辑，移除 PDF 转换、转换缓存及 API 镜像的 LibreOffice 依赖。原生 PDF 继续由现有 pdf.js 组件显示。全屏移动当前 Office 渲染器，停用或离开预览时释放实例。
+共享预览标题栏和渲染失败提示中的下载按钮复用已读取的 Office 原件。知识库详情的下载菜单继续请求原件下载接口。Workspace、Knowledge、Viewer 和产物预览共用预览内容准备逻辑，移除 PDF 转换、转换缓存及 API 镜像的 LibreOffice 依赖。停用或离开预览时释放 Office 渲染器实例。原生 PDF 继续由现有 pdf.js 组件显示。
 
 Vite 只装配 Word、表格和演示文稿渲染器，首次打开 Office 文件时再加载。开发静态 Worker 放在依赖缓存，生产构建由插件写入同源产物。开发态的 JSZip ESM 适配沿已声明的 Word 渲染器解析依赖。
 
-Office 正文沿用应用的预览标题栏。文件操作和主题由应用管理，表格通过工作表标签导航，PPTX 通过滚动和应用全屏阅读。锁定版 PPTX 渲染器由 pnpm 补丁移除内置放映按钮与键盘监听。上游提供关闭放映的选项时，可用该选项替换补丁。
+Office 正文沿用应用的预览标题栏。文件操作和主题由应用管理，表格通过工作表标签导航，PPTX 在预览面板内滚动阅读。锁定版 PPTX 渲染器由 pnpm 补丁移除内置放映按钮与键盘监听。上游提供关闭放映的选项时，可用该选项替换补丁。
 
 锁定版表格渲染器的 pnpm 补丁将初始解析提示简化为一句话和一个转圈。表格可继续滚动时，`e-virt-table` 的默认滚动处理会拦截带修饰键的滚轮事件。补丁将 Ctrl 或 Cmd 加滚轮留给 FileViewer 缩放，普通滚轮继续滚动表格。上游分别支持简洁的解析状态和组合键缩放后，通过浏览器回归即可移除对应补丁。
 

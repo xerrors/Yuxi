@@ -15,7 +15,7 @@ from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.extensions.tools.builtin.present_artifacts import present_artifacts
 from yuxi.modules.workspace.filesystem import Workspace
 from yuxi.modules.workspace.models import Project
-from yuxi.modules.workspace.runtime_paths import runtime_workdir_path
+from yuxi.modules.workspace.runtime_paths import runtime_workdir_path, workspace_scope_from_runtime_path
 from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
@@ -30,6 +30,7 @@ async def test_recent_artifacts_follow_successful_presentations_and_live_visibil
     url = "/api/agent/artifacts/recent"
     thread_id = await create_default_agent_thread(test_client, headers, title_prefix="recent-deliverables")
     project_id = None
+    saved_scope = None
     try:
         workdir = await get_thread_workdir_path(thread_id)
         workspace = Workspace(uid)
@@ -106,6 +107,52 @@ async def test_recent_artifacts_follow_successful_presentations_and_live_visibil
         preview = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/artifacts/{paths['new'].lstrip('/')}", headers=headers)
         assert preview.status_code == 200 and preview.content == b"new"
 
+        saved = await test_client.post(
+            f"/api/v1/agents/sessions/{thread_id}/artifacts/save",
+            headers=headers,
+            json={"path": paths["new"], "destination_path": "/saved_artifacts"},
+        )
+        assert saved.status_code == 200, saved.text
+        artifact = saved.json()
+        saved_scope = workspace_scope_from_runtime_path(artifact["saved_path"])
+        async with postgres_sessions() as db:
+            db.add(
+                Message(
+                    session_record_id=run.session_record_id,
+                    turn_id=run.turn_id,
+                    run_id=run.id,
+                    role="tool",
+                    content="",
+                    message_type="tool_audit",
+                    execution_status="completed",
+                    finished_at=now + timedelta(seconds=4),
+                    extra_metadata={"tool_name": "present_artifacts", "input": {"filepaths": [artifact["saved_path"]]}},
+                )
+            )
+            await db.commit()
+        removed = await test_client.delete("/api/workspace/file", headers=headers, params={"path": f"/{workdir}"})
+        assert removed.status_code == 200, removed.text
+        missing = await test_client.get(f"/api/v1/agents/sessions/{thread_id}/artifacts/{paths['new'].lstrip('/')}", headers=headers)
+        assert missing.status_code == 404, missing.text
+        workspace.replace_authorized_file(f"/{workdir}", b"replacement")
+        try:
+            old_url = f"/api/v1/agents/sessions/{thread_id}/artifacts/{paths['new'].lstrip('/')}"
+            download_missing = await test_client.get(old_url, headers=headers)
+            assert download_missing.status_code == 404, download_missing.text
+            save_missing = await test_client.post(
+                f"/api/v1/agents/sessions/{thread_id}/artifacts/save",
+                headers=headers,
+                json={"path": paths["new"], "destination_path": "/saved_artifacts"},
+            )
+            assert save_missing.status_code == 404, save_missing.text
+        finally:
+            workspace.delete_authorized_path(f"/{workdir}", root="/")
+        download = await test_client.get(artifact["saved_artifact_url"], headers=headers)
+        assert download.status_code == 200 and download.content == b"new"
+        overview = await test_client.get(url, headers=headers)
+        assert overview.status_code == 200
+        assert [item["path"] for item in overview.json()["items"]] == [artifact["saved_path"]]
+
         async with postgres_sessions() as db:
             thread = await db.scalar(select(Session).where(Session.thread_id == thread_id))
             thread.app_id = "isolated-app"
@@ -120,6 +167,9 @@ async def test_recent_artifacts_follow_successful_presentations_and_live_visibil
         deleted = await test_client.get(url, headers=headers)
         assert deleted.status_code == 200 and deleted.json()["items"] == []
     finally:
+        if saved_scope is not None:
+            removed = await test_client.delete("/api/workspace/file", headers=headers, params={"path": saved_scope})
+            assert removed.status_code == 200, removed.text
         if project_id is not None:
             # 通用清理器只接收测试创建的隐式项目。
             async with postgres_sessions() as db:

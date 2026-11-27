@@ -257,6 +257,11 @@ class ContainerSandboxProvider:
             "server_time": format_utc_datetime(utc_now()),
         }
 
+    def active_workspace_uids(self, uids: list[str]) -> set[str]:
+        """容器删除前仍可能有 stdin 清理，包含独立的 Skill 获取容器。"""
+        active = {item.get("labels", {}).get("yuxi.uid") for item in self.client.list()}
+        return {uid for uid in uids if workspace_uid_dirname(uid) in active}
+
     def rebuild(self, uid: str) -> dict:
         """容器按 Run 创建，没有可重建的用户级环境。"""
         raise StateConflictError("容器沙盒按任务创建，不支持重建；请重新发起任务", code="sandbox_ephemeral")

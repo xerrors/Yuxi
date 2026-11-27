@@ -9,6 +9,7 @@ import pytest
 
 from test.unit.sandbox.test_sandbox_runner_manager import FakeEngine, settings
 from yuxi.modules.agents.repositories.sandbox import SandboxRepository
+from yuxi.modules.workspace.usage_changes import pending_workspace_changes
 from yuxi.sandbox_runner.manager import ContainerManager, SandboxValidationError
 
 REQUEST_ID = "remote-skill-" + "a" * 32
@@ -46,6 +47,7 @@ class SkillEngine(FakeEngine):
 @pytest.fixture
 def fetch_manager(tmp_path, monkeypatch):
     """请求没有 Run，目录只覆盖本次获取所需的两个子目录。"""
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path))
     request = tmp_path / "shared/one/workspace/.remote-skills" / REQUEST_ID
     (request / "workspace").mkdir(parents=True)
     (tmp_path / "shared/one/workspace/private.txt").write_text("PRIVATE_WORKSPACE_MARKER")
@@ -90,6 +92,7 @@ def test_fetch_uses_one_request_mount_and_fixed_cli_without_run(fetch_manager, a
     assert "TMPDIR=/tmp" in config["Env"]
     assert engine.removed == ["cid1"]
     assert engine.container is None
+    assert [change.uid for change in pending_workspace_changes()] == ["one"]
 
 
 @pytest.mark.parametrize("failure", ["create", "read", "inspect"])

@@ -26,16 +26,6 @@
         </div>
         <div class="header__right">
           <button
-            v-if="messageDebugEnabled"
-            type="button"
-            class="agent-nav-btn agent-debug-mode-btn"
-            title="调试模式已开启：点击打开消息时序调试面板"
-            @click.stop="toggleMessageDebugPanel"
-          >
-            <Bug size="15" class="nav-btn-icon debug-icon" />
-            <span class="hide-text">Debug</span>
-          </button>
-          <button
             v-if="showStateEntry"
             type="button"
             class="agent-nav-btn agent-state-btn state-entry-btn"
@@ -315,6 +305,7 @@
         }"
       >
         <AgentPanel
+          :key="accountVersion"
           :thread-id="currentChatId"
           :active-run-id="currentThreadState?.activeRunId || null"
           :run-active="Boolean(currentThreadState?.activeRunId && currentThreadState?.isStreaming)"
@@ -324,6 +315,7 @@
           :preview-cache="agentPanelPreviewCache"
           :maximized="isAgentPanelMaximized"
           :sections="visibleAgentPanelSections"
+          :start-sections="startPanelSections"
           :active-section-key="agentPanelActiveSectionKey"
           :filesystem-visible="agentPanelFilesystemVisible"
           :filesystem-polling-active="agentPanelFilesystemPollingActive"
@@ -337,6 +329,8 @@
           @close-preview-path="closePanelPreviewPath"
           @toggle-maximize="toggleAgentPanelMaximized"
           @activate-section="activateAgentPanelSection"
+          @open-start="showStartPanel"
+          @open-start-section="openStartSection"
           @close-section="closeAgentPanelSection"
         >
           <template #window-actions>
@@ -360,8 +354,10 @@
               :sessions="cooperationSessions"
               :current-id="currentChatId"
               :error="cooperationError"
+              :continue-disabled="mainThread?.threadWorkdirUnavailable"
               @open="openCooperationSession"
               @refresh="refreshCooperation"
+              @control-error="handleExecutionError"
             />
             <div
               :id="mainChatPanelId"
@@ -411,7 +407,7 @@ import {
   watch
 } from 'vue'
 import { useRouter } from 'vue-router'
-import { Bug, ChevronDown, Gauge, PanelRight, RefreshCw } from '@lucide/vue'
+import { ChevronDown, Gauge, PanelRight, RefreshCw } from '@lucide/vue'
 import { agentApi } from '@/apis'
 import { useUserStore } from '@/modules/identity'
 import { useInfoStore } from '@/modules/settings'
@@ -429,7 +425,10 @@ import { useSessionCooperation } from '../model/useSessionCooperation'
 import { normalizeArtifacts } from '../model/artifacts'
 import { getStatePanelPlacement } from '../model/statePanelLayout'
 import {
+  COOPERATION_SECTION,
+  FILE_TREE_SECTION,
   MESSAGE_DEBUG_SECTION,
+  WORKSPACE_TREE_SECTION,
   TURN_SOURCES_SECTION,
   shouldPollAgentPanelFilesystem
 } from '../model/agentPanelSections'
@@ -454,6 +453,7 @@ const userStore = useUserStore()
 const infoStore = useInfoStore()
 const sessionRuntime = useSessionRuntimeStore()
 const mainThread = ref(null)
+const handleExecutionError = (threadId, error) => mainThread.value?.handleExecutionError(threadId, error)
 const currentChatId = computed(() => mainThread.value?.threadId || null)
 const currentThreadState = computed(() => sessionRuntime.peekThreadState(currentChatId.value))
 const currentThread = computed(() => currentThreadState.value?.detail || null)
@@ -487,6 +487,7 @@ const statePanelRef = ref(null)
 const statePanelPlacement = ref({ mode: 'floating', style: {} })
 
 const {
+  accountVersion,
   isFilePanelOpen,
   isAgentPanelMaximized,
   isResizing,
@@ -496,10 +497,12 @@ const {
   agentPanelPreviewCache,
   panelWidthPercentage,
   activeAgentPanelPreview,
+  activeAgentPanelSection,
   agentPanelSections,
   agentPanelActiveSectionKey,
   showFilePanel,
-  showFileTreePanel,
+  showStartPanel,
+  openStartSection,
   filesystemRefreshVersions,
   markThreadFilesChanged,
   openPanelPreview,
@@ -601,13 +604,12 @@ const {
   onSnapshot: sessionRuntime.reconcileCooperationSessions
 })
 
-const toggleMessageDebugPanel = () => {
-  if (isFilePanelOpen.value && agentPanelActiveSectionKey.value === MESSAGE_DEBUG_SECTION.key) {
-    closeFilePanel()
-    return
-  }
-  showSection(MESSAGE_DEBUG_SECTION)
-}
+const startPanelSections = computed(() => [
+  FILE_TREE_SECTION,
+  WORKSPACE_TREE_SECTION,
+  ...(cooperationSessions.value.length > 1 ? [COOPERATION_SECTION] : []),
+  ...(messageDebugEnabled.value ? [MESSAGE_DEBUG_SECTION] : [])
+])
 
 /** 消息内"来源"改为在右侧栏展开；再次点击同一 Turn 的入口时收起面板。 */
 const openTurnSourcesPanel = (payload, threadId = currentChatId.value) => {
@@ -680,14 +682,7 @@ async function openCooperationAttention(sessionId) {
   }
 }
 
-/** 在现有侧栏标签中打开协作列表，重复点击复用同一标签。 */
-const openCooperationTree = () => {
-  showSection({
-    key: 'cooperation',
-    type: 'cooperation',
-    title: '协作会话'
-  })
-}
+const openCooperationTree = () => showSection(COOPERATION_SECTION)
 
 const sessionLinkNavigator = createSessionLinkNavigator({
   router,
@@ -726,10 +721,7 @@ async function openSessionFromRoute(sessionId) {
   if (!sessionId) {
     sessionLinkNavigator.invalidate()
     if (isAgentPanelMaximized.value) agentPanelActiveSectionKey.value = 'main-session'
-    else if (
-      agentPanelSections.value.find((section) => section.key === agentPanelActiveSectionKey.value)
-        ?.type === 'session'
-    ) {
+    else if (activeAgentPanelSection.value?.type === 'session') {
       hideFilePanel()
     }
     return
@@ -802,9 +794,6 @@ const shouldRefreshStateWhileStreaming = computed(
     Boolean(currentChatId.value) &&
     isStreaming.value &&
     statePanelOpen.value
-)
-const activeAgentPanelSection = computed(() =>
-  agentPanelSections.value.find((section) => section.key === agentPanelActiveSectionKey.value)
 )
 const agentPanelFilesystemVisible = computed(
   () =>
@@ -969,7 +958,7 @@ function handleTerminal(threadId) {
 
 function handleArtifactSaved(threadId) {
   markThreadFilesChanged(threadId)
-  if (threadId === currentChatId.value) showFileTreePanel()
+  showSection(WORKSPACE_TREE_SECTION)
 }
 
 const toggleStatePanel = async () => {
@@ -1185,14 +1174,8 @@ watch(
   height: auto;
   max-width: 100%;
   border: none;
-  border-left: 0 solid var(--gray-150);
   border-radius: 0;
   box-shadow: none;
-}
-
-.side-panel--file.is-visible {
-  min-width: 0;
-  border-left-width: 1px;
 }
 
 .side-panel--state {
@@ -1786,22 +1769,6 @@ watch(
 .agent-nav-btn.agent-state-btn.active {
   color: var(--gray-900);
   background-color: var(--gray-100);
-}
-
-.agent-nav-btn.agent-debug-mode-btn {
-  color: var(--gray-800);
-  background-color: var(--gray-100);
-  border: 1px solid var(--gray-300);
-
-  &:hover {
-    background-color: var(--gray-200);
-    color: var(--gray-1000);
-    border-color: var(--gray-400);
-  }
-
-  .debug-icon {
-    color: var(--gray-700);
-  }
 }
 
 .panel-main-chat,

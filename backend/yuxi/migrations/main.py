@@ -8,7 +8,12 @@ from yuxi.infrastructure.postgres.base import BusinessBase, KnowledgeBase
 from yuxi.infrastructure.postgres.checkpointer import setup_langgraph_checkpointer
 from yuxi.infrastructure.postgres.manager import PostgresManager
 from yuxi.infrastructure.postgres.models import load_models
-from yuxi.infrastructure.postgres.schema import BUSINESS_SCHEMA_VERSION, KNOWLEDGE_SCHEMA_VERSION, get_schema_versions
+from yuxi.infrastructure.postgres.schema import (
+    BUSINESS_SCHEMA_VERSION,
+    KNOWLEDGE_SCHEMA_VERSION,
+    get_schema_versions,
+    require_workspace_schema,
+)
 from yuxi.migrations.schema import (
     create_business_tables,
     create_knowledge_tables,
@@ -29,6 +34,7 @@ async def initialize_schema(manager: PostgresManager) -> None:
         await drop_fresh_schema(manager)
         versions = {}
     if versions == current:
+        await require_workspace_schema(manager)
         return
     if versions:
         raise RuntimeError(f"Unsupported Yuxi schema versions: {versions}; required {current}")

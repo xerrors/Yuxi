@@ -96,11 +96,11 @@ async def test_user_message_resumes_paused_queue_before_old_steer(sessions):
         await db.commit()
     async with sessions() as db:
         session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
-        old = await scheduler.claim_next_input(db=db, agent_session=session)
+        old_run_id = await scheduler.claim_next_input(db=db, agent_session=session)
         await db.commit()
     async with sessions() as db:
         previous = await db.get(AgentInput, "input-0")
-        assert previous.consumed_run_id == old.run_id and previous.turn_id != new.turn_id
+        assert previous.consumed_run_id == old_run_id and previous.turn_id != new.turn_id
         assert (await db.get(AgentInput, "input-1")).status == "pending"
 
 
@@ -376,10 +376,10 @@ async def test_resuming_input_waits_for_its_attachments_before_old_queue(session
         await db.commit()
     async with sessions() as db:
         session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
-        dispatch = await scheduler.claim_next_input(db=db, agent_session=session)
+        claimed_run_id = await scheduler.claim_next_input(db=db, agent_session=session)
         await db.commit()
     async with sessions() as db:
-        assert (await db.get(AgentInput, "input-1")).consumed_run_id == dispatch.run_id
+        assert (await db.get(AgentInput, "input-1")).consumed_run_id == claimed_run_id
         assert (await db.get(AgentInput, "input-0")).status == "pending"
 
 

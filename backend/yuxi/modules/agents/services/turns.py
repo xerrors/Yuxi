@@ -18,11 +18,11 @@ from yuxi.modules.agents.services.cooperation_notifications import notify_turn_s
 from yuxi.modules.agents.services.queue_control import pause_pending_queue
 from yuxi.modules.agents.services.run_creation import create_resume_run
 from yuxi.modules.agents.services.run_lifecycle import settle_waiting_cancel
-from yuxi.modules.agents.services.scheduler import Dispatch, deliver
+from yuxi.modules.agents.services.scheduler import deliver
 from yuxi.modules.agents.services.thread_access import require_thread
 from yuxi.modules.agents.services.tracing import finish_turn_observation_if_terminal
 from yuxi.modules.agents.services.transport import publish_cancel_signals
-from yuxi.modules.workspace.services.bindings import resolve_session_workdir_binding
+from yuxi.modules.workspace.services.bindings import ensure_session_workdir_available
 from yuxi.shared.errors import InvalidInputError, InvalidOperationError, ResourceNotFoundError, StateConflictError
 
 
@@ -81,7 +81,7 @@ async def resume_turn(
     if previous is None or previous.status != "interrupted" or waitpoint.get("run_id") != previous.id:
         raise StateConflictError("等待点与 interrupted Run 不一致")
     resume_value = _validate_resume_response(waitpoint, response)
-    binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=scope.uid, db=db)
+    await ensure_session_workdir_available(agent_session=agent_session, uid=scope.uid, db=db)
 
     run = await create_resume_run(
         db=db,
@@ -115,7 +115,7 @@ async def resume_turn(
 
     await notify_user_intervention(db, agent_session, key=receipt.id, action="resume")
     await db.commit()
-    await deliver(Dispatch(run_id=run_id, binding=binding))
+    await deliver(run_id)
     return _accepted(receipt)
 
 

@@ -26,7 +26,7 @@ from yuxi.modules.agents.runtime.base import GraphExecutionResult, json_safe
 from yuxi.modules.agents.runtime.callbacks.model_request_timing import FirstModelRequestRecorder
 from yuxi.modules.agents.runtime.context import BaseContext
 from yuxi.modules.agents.runtime.state import AgentStatePayload
-from yuxi.modules.agents.services.attachments import serialize_attachment
+from yuxi.modules.agents.services.attachments import require_attachment_files, serialize_attachment
 from yuxi.modules.agents.services.checkpoint_messages import save_messages_from_langgraph_state, save_partial_message
 from yuxi.modules.agents.services.message_recorder import RunMessageRecorder
 from yuxi.modules.agents.services.openai_events import OpenAIEventAdapter
@@ -377,6 +377,9 @@ async def stream_agent_execution(
             message_type = input_messages[0].message_type
             message_ids = [message.extra_metadata["message_id"] for message in input_messages]
             attachments = await AttachmentRepository(db).for_messages(message_ids)
+            attachment_paths = [item.path for records in attachments.values() for item in records]
+            if attachment_paths:
+                await asyncio.to_thread(require_attachment_files, str(current_user.uid), attachment_paths)
             for position, message_id in enumerate(message_ids):
                 visible = [serialize_attachment(item, thread_id=thread_id) for item in attachments[message_id]]
                 graph_input[position] = _with_attachment_context(graph_input[position], visible)

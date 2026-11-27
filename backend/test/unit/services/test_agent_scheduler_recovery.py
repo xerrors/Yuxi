@@ -105,18 +105,14 @@ async def test_recovery_republishes_owned_child_after_parent_completion(
         async def get_for_scope(self, **kwargs):
             return SimpleNamespace(status="running", current_run_id="child-run")
 
-    async def binding(**kwargs):
-        return SimpleNamespace(materialize_managed=False)
-
-    async def deliver(dispatch):
-        delivered.append(dispatch.run_id)
+    async def deliver(run_id):
+        delivered.append(run_id)
         return True
 
     monkeypatch.setattr(scheduler.pg_manager, "get_async_session_context", session_context)
     monkeypatch.setattr(scheduler, "AgentRunRepository", RunRepo)
     monkeypatch.setattr(scheduler, "SessionRepository", ConvRepo)
     monkeypatch.setattr(scheduler, "AgentTurnRepository", TurnRepo)
-    monkeypatch.setattr(scheduler, "resolve_session_workdir_binding", binding)
     monkeypatch.setattr(scheduler, "deliver", deliver)
 
     await scheduler.recover_pending_dispatches()
@@ -135,8 +131,7 @@ async def test_delivery_reports_queue_publication_failure_without_rejecting_comm
         raise cause
 
     monkeypatch.setattr("yuxi.modules.agents.services.transport.enqueue_agent_run", enqueue)
-    dispatch = scheduler.Dispatch(run_id="pending-run", binding=SimpleNamespace(materialize_managed=False))
-    assert await scheduler.deliver(dispatch) is False
+    assert await scheduler.deliver("pending-run") is False
 
 
 @pytest.mark.asyncio
@@ -149,24 +144,5 @@ async def test_delivery_reports_success_after_publication(monkeypatch):
         published.append(run_id)
 
     monkeypatch.setattr("yuxi.modules.agents.services.transport.enqueue_agent_run", enqueue)
-    dispatch = scheduler.Dispatch(run_id="pending-run", binding=SimpleNamespace(materialize_managed=False))
-    assert await scheduler.deliver(dispatch) is True
+    assert await scheduler.deliver("pending-run") is True
     assert published == ["pending-run"]
-
-
-@pytest.mark.asyncio
-async def test_delivery_does_not_hide_workdir_validation_as_queue_failure(monkeypatch):
-    """工作目录校验失败仍明确失败，不能被接收方当作可补投故障。"""
-    cause = ValueError("invalid workdir binding")
-
-    def materialize(*_args):
-        """在目录边界拒绝错误绑定。"""
-        raise cause
-
-    monkeypatch.setattr(scheduler, "ensure_bound_user_workdir", materialize)
-    dispatch = scheduler.Dispatch(
-        run_id="pending-run", binding=SimpleNamespace(materialize_managed=True, uid="test-user", workdir_path="projects/test")
-    )
-    with pytest.raises(ValueError, match="invalid workdir binding") as error:
-        await scheduler.deliver(dispatch)
-    assert error.value is cause

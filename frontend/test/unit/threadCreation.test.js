@@ -6,27 +6,38 @@ import { mountSessionWorkspace } from '../helpers/sessionWorkspace.js'
 import { createThreadForContext } from '../../src/modules/session/model/threadCreation.js'
 
 test('首次发送在创建 Thread 前冻结附件、图片和配置，后来草稿不能并入旧提交', async (t) => {
-  let resolveCreation, submitted
+  let submitted
+  const creation = Promise.withResolvers()
+  const request = Promise.withResolvers()
   const h = await mountSessionWorkspace(t, undefined, { send: async (threadId, draft) => { submitted = { threadId, draft } } })
   h.agentStore.agents = [{ agent_id: 'agent', can_run: true }]
   h.agentStore.selectedAgentId = 'agent'
   t.mock.method(h.agentStore, 'fetchAgentDetail', async () => ({ can_run: true }))
-  t.mock.method(h.state.chatThreadsStore, 'createThread', () => new Promise(resolve => { resolveCreation = resolve }))
-  h.state.userInput.value = '原始输入'
+  const fetch = globalThis.fetch
+  t.mock.method(globalThis, 'fetch', (path, options) => {
+    if (path !== '/api/agent/threads' || options?.method !== 'POST') return fetch(path, options)
+    request.resolve(JSON.parse(options.body))
+    return creation.promise
+  })
+  const firstText = 'Draft quarterly report'
+  h.state.userInput.value = firstText
   h.state.draftFilesByThread.value.__draft__ = [{ id: 'original-file' }]
   h.state.selectedModelByThread.__draft__ = 'original:model'
   h.state.savedToolApprovalMode.value = 'default'
   const images = [{ imageUrl: 'original-image' }]
   const sending = h.state.handleSendMessage({ images })
   assert.equal(h.state.userInput.value, '', '移到底部前清空冻结文本，避免多行编辑器二次收缩')
-  await Promise.resolve()
+  assert.deepEqual(await request.promise, {
+    agent_id: 'agent', title: null, tool_approval_mode: 'default', workdir_naming_text: firstText
+  })
   h.state.draftFilesByThread.value.__draft__.push({ id: 'next-draft-file' })
   images.push({ imageUrl: 'next-draft-image' })
   h.state.selectedModelByThread.__draft__ = 'next:model'
   h.state.savedToolApprovalMode.value = 'always_trust'
-  resolveCreation({ id: 'created-thread', agent: { id: 'agent' }, yuxi: {} })
+  creation.resolve(Response.json({ id: 'created-thread', agent: { id: 'agent' }, yuxi: {} }, { status: 201 }))
   await sending
   assert.equal(submitted.threadId, 'created-thread')
+  assert.equal(submitted.draft.text, firstText)
   assert.deepEqual(submitted.draft.attachments, [{ id: 'original-file' }])
   assert.deepEqual(submitted.draft.images, [{ imageUrl: 'original-image' }])
   assert.equal(submitted.draft.modelSpec, 'original:model')
@@ -95,10 +106,11 @@ for (const uploadTarget of ['__draft__', 'thread-a']) {
       return { id: 'same-session', agent: { id: 'agent' }, yuxi: {} }
     })
     h.state.savedToolApprovalMode.value = 'default'
-    await assert.rejects(h.state.createActiveThread(), /response lost/)
+    await assert.rejects(h.state.createActiveThread('Draft quarterly report'), /response lost/)
     h.state.savedToolApprovalMode.value = 'always_trust'
-    assert.equal(await h.state.createActiveThread(), 'same-session')
+    assert.equal(await h.state.createActiveThread('Different draft'), 'same-session')
     assert.deepEqual(calls[1], calls[0])
+    assert.equal(calls[1][3].workdirNamingText, 'Draft quarterly report')
     assert.equal(calls[1][1], null)
     assert.equal(calls[1][2].tool_approval_mode, 'default')
     assert.equal(detail.mock.calls.at(-1).arguments[0], 'agent')
@@ -145,6 +157,33 @@ test('模型选择按当前选择、Session、智能体默认值响应式回退�
   assert.equal(h.state.currentModelSpec.value, 'agent:model')
   h.state.currentChatId.value = null
   assert.equal(h.state.currentModelSpec.value, 'draft:model')
+})
+
+test('未选模型的首条消息沿用服务端创建的模型，避免把过期展示值写回会话', async (t) => {
+  const h = await mountSessionWorkspace(t)
+  h.agentStore.agents = [{ agent_id: 'agent', can_run: true }]
+  h.agentStore.selectedAgentId = 'agent'
+  h.state.configStore.config.default_model = 'stale:model'
+  t.mock.method(h.agentStore, 'fetchAgentDetail', async () => ({ can_run: true }))
+  t.mock.method(h.runtime, 'startInputMonitor', () => {})
+
+  const sessionPath = '/api/v1/agents/sessions'
+  const thread = { id: 'created-thread', agent: { id: 'agent', model: 'current:model' }, yuxi: {} }
+  const requests = new Map()
+  const fetch = globalThis.fetch
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    if ((!url.startsWith(sessionPath) && url !== '/api/agent/threads') || options?.method !== 'POST') return fetch(url, options)
+    requests.set(url, JSON.parse(options.body))
+    if (url.endsWith('/events')) return Promise.resolve(Response.json({ input_id: 'first-input' }, { status: 202 }))
+    return Promise.resolve(Response.json(thread))
+  })
+
+  assert.equal(h.state.currentModelSpec.value, 'stale:model')
+  assert.equal(await h.state.handleSendMessage({ text: '开始' }), true)
+  await h.state.chatThreadsStore.withThreadListUpdate(() => {})
+  const options = requests.get(`${sessionPath}/${thread.id}/events`).events[0].yuxi
+  assert.equal(Object.hasOwn(options, 'model'), false, '展示用的旧默认值不能覆盖本次输入')
+  assert.equal(requests.has(`${sessionPath}/${thread.id}`), false, '未选模型时不应写回会话')
 })
 
 test('预写 Thread 身份与已有历史都委派阅读器就绪，页面不重建读取流程', async (t) => {

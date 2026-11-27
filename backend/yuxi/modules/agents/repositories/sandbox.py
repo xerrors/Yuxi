@@ -63,6 +63,15 @@ class SandboxRepository:
         """读取该用户唯一环境。"""
         return connection.execute("SELECT * FROM user_sandboxes WHERE uid=%s", (uid,)).fetchone()
 
+    def active_workspace_uids(self, uids: list[str]) -> set[str]:
+        """只查标记用户，仍可能挂载可写目录的环境继续参与统计。"""
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT uid FROM user_sandboxes WHERE uid=ANY(%s) AND (state <> 'paused' OR error IS NOT NULL)",
+                (uids,),
+            )
+            return {row["uid"] for row in rows}
+
     def run_owner(self, run_id: str):
         """只读 Run 的执行归属与清理责任，不取得生命周期行锁。"""
         with self.connect() as connection:

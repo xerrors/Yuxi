@@ -27,7 +27,7 @@ from yuxi.modules.agents.scope import ActorScope
 from yuxi.modules.agents.services import input_config, inputs, scheduler, threads, turns
 from yuxi.modules.system.models import ConfigOption
 from yuxi.modules.system.options import system_options
-from yuxi.modules.workspace.services.bindings import WorkdirBinding
+from yuxi.modules.workspace.paths import user_workspace_dir
 
 SCOPE = ActorScope(uid="input-user", app_id=None)
 
@@ -126,21 +126,11 @@ async def send_input(sessions, content: str, mode: str = "steer") -> dict:
         )
 
 
-def input_workdir_binding() -> WorkdirBinding:
-    """提供领取输入所需的固定授权目录快照。"""
-    return WorkdirBinding(
-        session_record_id=1,
-        thread_id="input-thread",
-        uid=SCOPE.uid,
-        project_id="input-project",
-        workdir_path="projects/input-project",
-        directory_mode="managed",
-    )
-
-
 @pytest_asyncio.fixture
-async def sessions(monkeypatch):
+async def sessions(monkeypatch, tmp_path):
     """为输入契约建真实数据库，替代外部发现、沙盒、投递与通知。"""
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path))
+    (user_workspace_dir(SCOPE.uid) / "projects/input-project").mkdir(parents=True)
     schema, admin_engine, engine = await create_input_schema()
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as db:
@@ -159,14 +149,10 @@ async def sessions(monkeypatch):
         agent_session.config_snapshot = {"model": "test:chat", "tool_approval_mode": "default"}
         await db.commit()
 
-    async def resolve_binding(**kwargs):  # noqa: ARG001
-        """返回预先授权的隔离目录。"""
-        return input_workdir_binding()
-
-    async def deliver(dispatch):
+    async def deliver(claimed_run_id):
         """回读已提交 Run，避免触碰 Redis worker。"""
         async with factory() as db:
-            assert (await db.get(AgentRun, dispatch.run_id)).status == "pending"
+            assert (await db.get(AgentRun, claimed_run_id)).status == "pending"
         return True
 
     @asynccontextmanager
@@ -183,7 +169,6 @@ async def sessions(monkeypatch):
     monkeypatch.setattr(lifecycle, "finish_turn_observation_if_terminal", notify)
     monkeypatch.setattr(turns, "finish_turn_observation_if_terminal", notify)
     monkeypatch.setattr(turns, "publish_cancel_signals", notify)
-    monkeypatch.setattr(scheduler, "resolve_session_workdir_binding", resolve_binding)
     monkeypatch.setattr(threads, "deliver", deliver)
     monkeypatch.setattr(scheduler, "deliver", deliver)
     monkeypatch.setattr(scheduler.pg_manager, "get_async_session_context", context)
@@ -199,10 +184,10 @@ async def start_input_run(sessions, *, running: bool = True):
     async with sessions() as db:
         agent_session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
         agent_session.queue_paused = False
-        dispatch = await scheduler.claim_next_input(db=db, agent_session=agent_session, binding=input_workdir_binding())
-        run = await db.get(AgentRun, dispatch.run_id)
+        claimed_run_id = await scheduler.claim_next_input(db=db, agent_session=agent_session)
+        run = await db.get(AgentRun, claimed_run_id)
         if running:
-            run, acquired = await AgentRunRepository(db).mark_running(dispatch.run_id, worker_id="owner", lease_seconds=60)
+            run, acquired = await AgentRunRepository(db).mark_running(claimed_run_id, worker_id="owner", lease_seconds=60)
             assert acquired
         await db.commit()
         return run

@@ -13,6 +13,7 @@ from yuxi.modules.workspace.errors import FileTransferLimitError
 from yuxi.modules.workspace.runtime_paths import is_conversation_archive_path, is_runtime_path, runtime_path_for_workdir_scope
 from yuxi.modules.workspace.services.bindings import AuthorizedWorkdir, resolve_authorized_workdir
 from yuxi.modules.workspace.services.file_entries import file_entry, sort_file_entries
+from yuxi.modules.workspace.services.quota import require_upload_capacity
 from yuxi.modules.workspace.workdir import Workdir
 from yuxi.shared.errors import ContentTooLargeError, InvalidOperationError, PermissionDeniedError, ResourceNotFoundError, StateConflictError
 from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES, FileInput, PreparedFile, PreviewResult, detect_media_type
@@ -132,8 +133,10 @@ async def create_viewer_directory(*, thread_id: str, parent_path: str, name: str
 
 async def upload_viewer_files(*, thread_id: str, parent_path: str, files: list[FileInput], current_user, db) -> dict:
     """把用户上传直接写入实时 Workdir。"""
-    access = await resolve_authorized_workdir(thread_id=thread_id, uid=str(current_user.uid), db=db)
+    uid = str(current_user.uid)
+    access = await resolve_authorized_workdir(thread_id=thread_id, uid=uid, db=db)
     _validate_viewer_path(access, parent_path)
+    await require_upload_capacity(db, uid)
     file_names = [PurePosixPath(str(upload.filename or "")).name for upload in files]
     if any(not name or name in {".", ".."} for name in file_names):
         raise InvalidOperationError("无法识别的文件名")

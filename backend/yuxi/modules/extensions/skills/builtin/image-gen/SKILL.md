@@ -1,7 +1,7 @@
 ---
 name: image-gen
 description: "在 Agent 沙盒中生成并保存图片。当用户要求生成图片、海报、插画、文生图，或指定 Qwen-Image、其它兼容图片生成接口时使用此技能。"
-version: "2026.06.02"
+version: "2026.11.27"
 ---
 
 # 图片生成技能
@@ -33,7 +33,7 @@ version: "2026.06.02"
 
 ## 脚本示例
 
-可根据用户需求调整 prompt 和保存位置。将示例中的 Workdir 占位路径替换为主 prompt 提供的当前绝对虚拟路径，并按用户要求选择文件位置：
+在会话默认工作目录执行示例，按用户需求调整 prompt 和文件名。
 
 ```python
 import os
@@ -65,9 +65,7 @@ image_response = requests.get(
 )
 image_response.raise_for_status()
 
-workdir = Path("/home/user/workspace/projects/<当前项目目录>")
-output_path = workdir / "generated-image.png"
-output_path.parent.mkdir(parents=True, exist_ok=True)
+output_path = Path.cwd() / "generated-image.png"
 output_path.write_bytes(image_response.content)
 print(output_path.as_posix())
 ```

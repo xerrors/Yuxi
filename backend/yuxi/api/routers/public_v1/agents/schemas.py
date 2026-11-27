@@ -107,7 +107,7 @@ class SessionCreate(WireModel):
         Annotated[str, Field(min_length=1, max_length=32768)] | Annotated[list[InputMessage], Field(min_length=1, max_length=20)] | None
     ) = Field(
         default=None,
-        description="初始用户输入；字符串等价于一条 input_text 用户消息，省略创建空会话。",
+        description="初始用户输入；字符串等价于一条 input_text 用户消息，省略创建空会话。首条有文本的消息用于隐式工作目录命名。",
     )
     stream: StrictBool = Field(default=False, description="true 返回长期 text/event-stream；必须同时提供 input，客户端自行关闭订阅。")
     project_id: str | None = Field(default=None, description="Yuxi 扩展：当前用户的 Project；省略时创建隐式 Project。")

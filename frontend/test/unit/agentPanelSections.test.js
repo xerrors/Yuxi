@@ -4,6 +4,8 @@ import test from 'node:test'
 
 import {
   FILE_TREE_SECTION,
+  START_SECTION,
+  WORKSPACE_TREE_SECTION,
   closeAgentPanelSection,
   shouldPollAgentPanelFilesystem,
   upsertAgentPanelSection
@@ -28,6 +30,14 @@ test('关闭活动 Tab 后激活相邻项', () => {
     sections: [sections[0], sections[2]],
     activeKey: 'session:b'
   })
+})
+
+test('关闭最后一个文件标签后回到唯一的开始页', () => {
+  assert.deepEqual(closeAgentPanelSection([FILE_TREE_SECTION], FILE_TREE_SECTION.key, FILE_TREE_SECTION.key), {
+    sections: [START_SECTION],
+    activeKey: START_SECTION.key
+  })
+  assert.deepEqual(upsertAgentPanelSection([START_SECTION], START_SECTION), [START_SECTION])
 })
 
 test('normalizePreviewResponse 正确解析 JSON 预览结构而不把 raw payload 当纯文本', async () => {
@@ -126,6 +136,7 @@ test('文件树仅在页面可见的运行期文件视图中轮询', () => {
   }
 
   assert.equal(shouldPollAgentPanelFilesystem(base), true)
+  assert.equal(shouldPollAgentPanelFilesystem({ ...base, activeSection: WORKSPACE_TREE_SECTION }), false)
   assert.equal(shouldPollAgentPanelFilesystem({ ...base, panelOpen: false }), false)
   assert.equal(shouldPollAgentPanelFilesystem({ ...base, pageVisible: false }), false)
   assert.equal(shouldPollAgentPanelFilesystem({ ...base, streaming: false }), false)
@@ -148,13 +159,4 @@ test('文件树仅在页面可见的运行期文件视图中轮询', () => {
     }),
     false
   )
-})
-
-test('文件面板默认打开个人空间目录', () => {
-  const source = readFileSync(
-    new URL('../../src/modules/session/ui/workspace/AgentPanel.vue', import.meta.url),
-    'utf8'
-  )
-
-  assert.match(source, /const activeTreeScope = ref\('workspace'\)/)
 })

@@ -8,6 +8,7 @@ import secrets
 import threading
 import time
 import uuid
+from contextlib import nullcontext
 from datetime import timedelta
 from functools import partial
 from pathlib import Path
@@ -22,6 +23,7 @@ from yuxi.modules.agents.runtime.sandbox.cube import CubeAdapter, Environment
 from yuxi.modules.extensions.skills.projection import get_user_skills_root_dir
 from yuxi.modules.workspace.paths import ensure_user_workspace, workspace_uid_dirname
 from yuxi.modules.workspace.runtime_paths import SHARED_SKILLS_PATH, WORKSPACE_PATH
+from yuxi.modules.workspace.usage_changes import workspace_mutation
 from yuxi.shared.datetime import format_utc_datetime, utc_now
 from yuxi.shared.errors import StateConflictError, UpstreamError
 
@@ -158,6 +160,10 @@ class CubeSandboxProvider:
             "idle_deadline_at": format_utc_datetime(deadline) if deadline is not None else None,
             "server_time": format_utc_datetime(utc_now()),
         }
+
+    def active_workspace_uids(self, uids: list[str]) -> set[str]:
+        """按持久环境状态识别尚未确认休眠的 Workspace 写入者。"""
+        return self.repository.active_workspace_uids(uids)
 
     def rebuild(self, uid: str, *, failed_generation: int | None = None) -> dict:
         """空闲时替换 VM，宿主 Workspace 与 Skills 不参与删除。"""
@@ -343,14 +349,16 @@ class CubeSandboxProvider:
         try:
             state = self.adapter.state(environment).lower()
             self._require_run_owner(connection, uid)
-            if state == "paused":
-                row["state"] = "resuming"
-                self.repository.save_environment(connection, row)
-                self.adapter.connect(environment).close()
-            elif state != "running":
+            if state not in {"running", "paused"}:
                 raise RuntimeError("Cube 实例未就绪")
-            row.update(state="running", last_active_at=utc_now(), paused_at=None, error=None)
-            self.repository.save_environment(connection, row)
+            needs_marker = state == "paused" or row["state"] == "paused"
+            with workspace_mutation(uid) if needs_marker else nullcontext():
+                if state == "paused":
+                    row["state"] = "resuming"
+                    self.repository.save_environment(connection, row)
+                    self.adapter.connect(environment).close()
+                row.update(state="running", last_active_at=utc_now(), paused_at=None, error=None)
+                self.repository.save_environment(connection, row)
             return environment
         except StateConflictError:
             raise
@@ -382,27 +390,28 @@ class CubeSandboxProvider:
             paused_at=None,
             error=None,
         )
-        self._require_run_owner(connection, uid)
-        self.repository.save_environment(connection, row)
-
-        def created(reference):
-            """Cube 返回实例即落盘，初始化失败也可显式回收。"""
-            row.update(sandbox_id=reference.sandbox_id, traffic_token=reference.traffic_token)
+        with workspace_mutation(uid):
+            self._require_run_owner(connection, uid)
             self.repository.save_environment(connection, row)
 
-        try:
-            environment = self.adapter.create(
-                mounts=mounts,
-                metadata={"yuxi-uid": safe_uid, "yuxi-operation": row["operation_id"], "yuxi-generation": str(generation)},
-                envd_token=row["envd_token"],
-                on_created=created,
-            )
-            row.update(state="running", last_active_at=utc_now())
-            self.repository.save_environment(connection, row)
-            return environment
-        except Exception as exc:
-            self._failed(connection, row, exc)
-            raise UpstreamError("运行环境创建失败，请联系管理员检查 Cube 节点后重建环境", code="sandbox_create_failed") from exc
+            def created(reference):
+                """Cube 返回实例即落盘，初始化失败也可显式回收。"""
+                row.update(sandbox_id=reference.sandbox_id, traffic_token=reference.traffic_token)
+                self.repository.save_environment(connection, row)
+
+            try:
+                environment = self.adapter.create(
+                    mounts=mounts,
+                    metadata={"yuxi-uid": safe_uid, "yuxi-operation": row["operation_id"], "yuxi-generation": str(generation)},
+                    envd_token=row["envd_token"],
+                    on_created=created,
+                )
+                row.update(state="running", last_active_at=utc_now())
+                self.repository.save_environment(connection, row)
+                return environment
+            except Exception as exc:
+                self._failed(connection, row, exc)
+                raise UpstreamError("运行环境创建失败，请联系管理员检查 Cube 节点后重建环境", code="sandbox_create_failed") from exc
 
     def _require_run_owner(self, connection, uid: str) -> None:
         """调用来自 Worker 时复核可信 Run 上下文，独立用户操作沿用其授权入口。"""

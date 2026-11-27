@@ -244,7 +244,7 @@ jobs:
         run: docker compose down -v
 
   # 生命周期批次其余文件与经 worker 执行的模型驱动 E2E 共用一拓扑；
-  # 全部步骤依赖共享模型重放，重放启动后不再重建 api 容器。
+  # 共享模型重放的用例先完成，最后在小配额配置下运行自带重放的 Workspace 测试。
   lifecycle-worker-e2e:
     name: 生命周期与 worker E2E
     runs-on: ubuntu-24.04
@@ -310,6 +310,10 @@ jobs:
         run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest --junitxml=test/ci-reports/system-20.xml --durations=20 test/e2e/test_knowledge_mcp_agent.py -q
       - name: Verify container Agent execution and steer cleanup through HTTP and worker
         run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD -e CONTAINER_E2E_REPLAY_URL_TEMPLATE api uv run --no-sync --no-dev pytest --junitxml=test/ci-reports/system-31.xml --durations=20 test/e2e/test_container_agent_execution_e2e.py -q
+      - name: Verify Workspace soft quota and FIFO recovery on a small isolated volume budget
+        run: |
+          WORKSPACE_QUOTA_BYTES=4194304 docker compose up -d --no-deps --force-recreate --wait api worker
+          docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD -e E2E_WORKSPACE_QUOTA_BYTES=4194304 api uv run --no-sync --no-dev pytest --junitxml=test/ci-reports/workspace-quota.xml test/e2e/test_workspace_soft_quota.py -q
       - name: Make container test reports readable
         if: always()
         run: sudo chown -R "$(id -u):$(id -g)" backend/test/ci-reports
@@ -508,7 +512,7 @@ jobs:
       - name: Verify lifecycle HTTP and PostgreSQL boundaries
         timeout-minutes: 8
         run: |
-          docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api \
+          docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" -e OPENAI_REPLAY_URL api \
             uv run --no-sync --no-dev pytest --junitxml=test/ci-reports/system-24.xml --durations=20 \
             test/integration/api/test_chat_router.py::test_public_thread_endpoints_require_authentication \
             test/integration/api/test_chat_router.py::test_public_create_rejects_empty_input \
@@ -518,6 +522,7 @@ jobs:
             test/integration/api/test_public_agents_key_boundary.py \
             test/integration/api/test_public_session_mcps.py \
             test/integration/api/test_public_session_etag.py \
+            test/integration/api/test_workspace_projects_display_delete_guard_api.py \
             test/integration/services/test_agent_input_schema.py \
             test/integration/services/test_project_thread_archive.py \
             test/integration/services/test_run_stream_redis.py -q

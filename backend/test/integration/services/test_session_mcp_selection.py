@@ -172,7 +172,7 @@ async def test_steer_batch_merges_only_consumed_selections_and_keeps_run_config(
         assert settled.status == "yielded"
         await db.commit()
     async with sessions() as db:
-        successor = await db.get(AgentRun, settled.next_dispatch.run_id)
+        successor = await db.get(AgentRun, settled.next_run_id)
         context = successor.input_payload["context_snapshot"]
         assert context["mcps"] == ["first", "second"]
         assert context["model"] == current.input_payload["context_snapshot"]["model"]

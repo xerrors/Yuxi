@@ -43,7 +43,7 @@ class CubeReplayHandler(BaseHTTPRequestHandler):
         tool_messages = [message for message in messages[last_user:] if message["role"] == "tool"]
         if marker == "CUBE_THIRD" and len(tool_messages) == 1:
             workdir = re.search(r"当前 Project Workdir 为 ([^，\s]+)", json.dumps(messages, ensure_ascii=False)).group(1)
-            assert workdir.startswith("/home/user/workspace/projects/")
+            assert workdir.startswith("/home/user/workspace/agents/tasks/")
             delta = {
                 "role": "assistant",
                 "tool_calls": [

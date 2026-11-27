@@ -7,9 +7,11 @@ from typing import TYPE_CHECKING
 from sqlalchemy import text
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncConnection
+
     from yuxi.infrastructure.postgres.manager import PostgresManager
 
-BUSINESS_SCHEMA_VERSION = 7
+BUSINESS_SCHEMA_VERSION = 8
 KNOWLEDGE_SCHEMA_VERSION = 2
 SCHEMA_VERSION_TABLE = "yuxi_schema_migrations"
 
@@ -45,3 +47,18 @@ async def require_current_schema(manager: PostgresManager) -> None:
     if mismatches:
         detail = ", ".join(mismatches)
         raise RuntimeError(f"Database schema initialization is incomplete or incompatible: {detail}")
+    await require_workspace_schema(manager)
+
+
+async def require_workspace_schema(manager: PostgresManager) -> None:
+    """区分当前业务基线与其他同编号的开发库。"""
+    async with manager.async_engine.connect() as conn:
+        await require_schema_table(conn, "workspace_recent_files")
+        await require_schema_table(conn, "workspace_usage")
+
+
+async def require_schema_table(conn: AsyncConnection, table_name: str) -> None:
+    """核对版本号所代表的实际表已经存在。"""
+    exists = await conn.scalar(text("SELECT to_regclass(:table_name) IS NOT NULL"), {"table_name": table_name})
+    if not exists:
+        raise RuntimeError(f"Database schema initialization is incomplete or incompatible: {table_name} is missing")

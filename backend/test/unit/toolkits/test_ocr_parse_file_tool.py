@@ -17,7 +17,7 @@ pytestmark = pytest.mark.unit
 def workspace_root(tmp_path, monkeypatch):
     """工具输出使用真实且隔离的 UserWorkspace 文件边界。"""
     root = tmp_path / "workspace"
-    root.mkdir()
+    (root / _runtime().context.workdir_relative_path).mkdir(parents=True)
     monkeypatch.setattr("yuxi.modules.workspace.filesystem.user_workspace_dir", lambda _uid: root)
     return root
 

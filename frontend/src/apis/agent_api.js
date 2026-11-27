@@ -52,6 +52,9 @@ export const agentApi = {
    */
   getAgentDetail: (agentId) => apiGet(`/api/agent/${agentId}`),
 
+  checkThreadWorkdir: (threadId) =>
+    apiGet(`/api/agent/threads/${encodeURIComponent(threadId)}/workdir`),
+
   /** 直接读取公开内容页，轮次恢复可限定 Turn。 */
   getSessionItems: async (threadId, { after, turnId, limit = 100, order = 'desc' } = {}) => {
     const params = new URLSearchParams({ limit: String(limit), order })
@@ -341,14 +344,15 @@ export const threadApi = {
    * @param {Object} metadata - 元数据
    * @returns {Promise} - 创建结果
    */
-  createThread: async (agentId, title, metadata, { requestId, projectId } = {}) => {
+  createThread: async (agentId, title, metadata, { requestId, projectId, workdirNamingText } = {}) => {
     const session = await apiPost(
-      '/api/v1/agents/sessions',
+      '/api/agent/threads',
       {
         agent_id: agentId,
         title: title ? Array.from(title).slice(0, 255).join('') : null,
         tool_approval_mode: metadata?.tool_approval_mode,
-        ...(projectId ? { project_id: projectId } : {})
+        ...(projectId ? { project_id: projectId } : {}),
+        ...(workdirNamingText ? { workdir_naming_text: workdirNamingText } : {})
       },
       { headers: { 'Idempotency-Key': requestId } }
     )

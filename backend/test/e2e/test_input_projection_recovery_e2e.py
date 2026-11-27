@@ -45,18 +45,21 @@ def _consume_and_exit(thread_id, claim_lease):
         async with pg_manager.get_async_session_context() as db:
             session = await SessionRepository(db).lock_session_by_thread_id(thread_id)
             session.queue_paused = False
-            dispatch = await claim_next_input(db=db, agent_session=session)
-            assert dispatch is not None
+            claimed_run_id = await claim_next_input(db=db, agent_session=session)
+            assert claimed_run_id is not None
             if claim_lease:
-                _, acquired = await AgentRunRepository(db).mark_running(dispatch.run_id, worker_id="e2e-lost-process", lease_seconds=1)
+                _, acquired = await AgentRunRepository(db).mark_running(claimed_run_id, worker_id="e2e-lost-process", lease_seconds=1)
                 assert acquired
 
     asyncio.run(consume())
     os._exit(17)
 
 
-@pytest.mark.parametrize("claim_lease,batch", [(False, False), (True, False), (False, True)])
-async def test_process_loss_preserves_consumed_projection(e2e_client, e2e_headers, claim_lease, batch):
+@pytest.mark.parametrize(
+    "claim_lease,batch,delete_files",
+    [(False, False, False), (True, False, False), (False, True, False), (False, True, True)],
+)
+async def test_process_loss_preserves_consumed_projection(e2e_client, e2e_headers, claim_lease, batch, delete_files):
     """提交后补投或租约过期都保持同一输入、消息身份和 Turn 结果归属。"""
     me = await e2e_client.get("/api/auth/me", headers=e2e_headers)
     await _provider(e2e_client, e2e_headers)
@@ -126,6 +129,20 @@ async def test_process_loss_preserves_consumed_projection(e2e_client, e2e_header
             assert receipt["run_id"] is None
         assert await conn.fetchval("SELECT count(*) FROM messages WHERE source_input_id=ANY($1::varchar[])", input_ids) == 0
 
+        if delete_files:
+            prepared = await conn.fetch("SELECT status, object_name FROM agent_attachments WHERE id=ANY($1::varchar[])", file_ids)
+            assert len(prepared) == len(file_ids)
+            assert all(row["status"] == "ready" and row["object_name"] is None for row in prepared)
+            workdir = await conn.fetchval(
+                "SELECT p.workdir_path FROM projects p JOIN sessions s ON s.project_id=p.id WHERE s.thread_id=$1",
+                thread_id,
+            )
+            removed = await e2e_client.delete("/api/workspace/file", headers=e2e_headers, params={"path": f"/{workdir}"})
+            assert removed.status_code == 200, removed.text
+            parent, name = workdir.rsplit("/", 1)
+            restored = await e2e_client.post("/api/workspace/directory", headers=e2e_headers, json={"parent_path": f"/{parent}", "name": name})
+            assert restored.status_code == 200, restored.text
+
         process = multiprocessing.get_context("spawn").Process(target=_consume_and_exit, args=(thread_id, claim_lease))
         process.start()
         await asyncio.to_thread(process.join, 30)
@@ -167,6 +184,12 @@ async def test_process_loss_preserves_consumed_projection(e2e_client, e2e_header
             assert await conn.fetchval("SELECT error_type FROM agent_runs WHERE id=$1", run_id) == "worker_lease_expired"
             assert await conn.fetchval("SELECT count(*) FROM agent_inputs WHERE thread_id=$1 AND status='pending'", thread_id) == 0
             assert not await conn.fetchval("SELECT queue_paused FROM sessions WHERE thread_id=$1", thread_id)
+        elif delete_files:
+            assert turn["status"] == "failed", turn
+            assert turn["yuxi"]["result_run_id"] is None
+            failure = await conn.fetchrow("SELECT error_message, first_model_request_at FROM agent_runs WHERE id=$1", run_id)
+            assert "附件文件已不存在或不可访问" in failure["error_message"]
+            assert failure["first_model_request_at"] is None
         else:
             assert turn["status"] == "completed", turn
             assert turn["yuxi"]["result_run_id"] == run_id

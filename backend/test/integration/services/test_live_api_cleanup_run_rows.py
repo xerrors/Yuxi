@@ -34,7 +34,7 @@ from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.input_messages import build_chat_input_message, serialize_input_message
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.models import Project
-from yuxi.modules.workspace.paths import ensure_bound_user_workdir, user_workdir_host_dir
+from yuxi.modules.workspace.paths import user_workdir_host_dir, user_workspace_dir
 from yuxi.shared.datetime import utc_now
 from yuxi.shared.errors import ResourceNotFoundError
 
@@ -487,7 +487,7 @@ async def test_resource_cleanup_lock_makes_overlapping_linked_project_revalidate
     neighbor_project_id = str(uuid.uuid4())
     workdir_path = f"projects/2026-01-01_00-00-00_{target_project_id[:8]}"
     linked_workdir_path = f"{workdir_path}/child"
-    ensure_bound_user_workdir(uid, workdir_path)
+    (user_workspace_dir(uid) / workdir_path).mkdir(parents=True)
     user_workdir_host_dir(uid, workdir_path).joinpath("child").mkdir()
     async with session_factory() as db:
         db.add(User(username=uid, uid=uid, password_hash="test"))

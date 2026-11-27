@@ -248,11 +248,11 @@ async (page) => {
     await page.evaluate(() => localStorage.setItem('theme', 'dark'))
     await open(`/agent/${threadId}`)
     const openPanel = page.getByRole('button', { name: '打开侧边栏' })
-    const threadTab = page.getByRole('tab', { name: '对话目录' })
-    await openPanel.or(threadTab).filter({ visible: true }).first().waitFor()
+    const workspaceFiles = page.getByRole('button', { name: '工作区文件', exact: true })
+    await openPanel.or(workspaceFiles).filter({ visible: true }).first().waitFor()
     if (await openPanel.isVisible()) await openPanel.click()
-    await threadTab.click()
-    await page.getByTitle(fixtures[3], { exact: true }).click()
+    await workspaceFiles.click()
+    await page.getByRole('region', { name: '工作区文件', exact: true }).getByTitle(fixtures[3], { exact: true }).click()
     await previewText('简约风季度工作汇报').waitFor({ timeout: 45000 })
     const presentation = page.locator('.pptx-viewer-shell')
     await presentation.getByText('简约风季度工作汇报', { exact: true }).first().click()
@@ -264,9 +264,8 @@ async (page) => {
     check(await presentation.locator('.pptx-slideshow-button').count() === 0, 'PPTX 仍显示放映按钮')
     await previewText('工作内容回顾').scrollIntoViewIfNeeded()
     await screenshot('agent-pptx-dark', page.locator('.agent-panel .preview-pane'))
-    await page.getByTitle('全屏预览', { exact: true }).click()
-    await page.locator('.fullscreen-preview-overlay').getByText('工作内容回顾', { exact: true }).first().waitFor()
-    await page.locator('.fullscreen-preview-overlay').getByTitle('关闭', { exact: true }).click()
+    check(await page.locator('.agent-panel .preview-pane').getByTitle('全屏预览', { exact: true }).count() === 0,
+      '侧边栏 PPTX 预览应移除全屏按钮')
 
     // 阻断 Office 模块后只读一次原件，直接下载的浏览器字节与上传夹具一致。
     await page.route(viewerModule, (route) => route.abort())

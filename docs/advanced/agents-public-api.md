@@ -105,6 +105,8 @@ POST 更新使用 `{"agent":{"model":"<provider:model>"},"yuxi":{"title":"新标
 
 创建可传 `agent_id`、`title`、`project_id`、`agent.model`、`tool_approval_mode`、`input`、`yuxi.attachment_file_ids`、`yuxi.mcps` 和 `stream`。`agent_id` 使用可见 Agent slug；`input` 是文本字符串或最多 20 条有序 `user` 消息，内容块支持 `input_text` 与内联 `data:image/...;base64,...` 的 `input_image`。每条消息最多 10 张图片，图片内容总量最多 80 MiB。内置 nginx 对 Thread 创建和消息事件放行 100 MiB 请求体，外层代理也需配置相应上限。附件及 `stream=true` 均要求同时提供非空输入。带输入创建先把 Thread、Input、提交级附件绑定和回执在同一数据库事务提交；有附件时再准备 Workdir 文件并提交就绪事实。只有文件就绪且队列允许领取时才在消费事务创建 Turn/Run 与正式 Message，提交后投递 worker。
 
+隐式工作目录取第一条含非空白文本的初始消息命名。空会话使用默认前缀。显式指定 Project 时沿用已绑定的目录。详见[工作目录说明](../mechanisms/sandbox.md)。
+
 ```bash
 curl --fail "$BASE_URL/api/v1/agents/sessions" \
   -H "Authorization: Bearer $API_KEY" \

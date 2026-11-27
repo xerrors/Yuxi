@@ -47,6 +47,7 @@ fi
 uv run --locked --group test pytest \
     test/integration/api/test_builtin_skill_access.py \
     test/integration/api/test_abridge_plugin_visibility.py \
+    test/integration/api/test_session_mention_resources.py \
     test/integration/services/test_agent_plugin_migration.py \
     test/integration/services/test_agent_state_projection_flow.py \
     test/integration/services/test_plugin_content_sync.py \
@@ -62,6 +63,7 @@ uv run --locked --group test pytest \
     test/integration/services/test_schema_migration_version.py \
     test/integration/services/test_agent_input_concurrency.py \
     test/integration/services/test_thread_priority_inputs.py \
+    test/integration/services/test_domain_error_consumers.py::test_arq_worker_persists_domain_rejection_without_http_prefix \
     test/integration/services/test_agent_dispatch_receipts.py \
     test/integration/services/test_agent_stop_recovery.py \
     test/integration/services/test_session_title_generation.py \
@@ -80,6 +82,7 @@ uv run --locked --group test pytest \
     test/integration/services/test_knowledge_evaluation_cancel.py \
     test/integration/services/test_database_relation_integrity.py \
     test/integration/services/test_database_access_paths.py \
+    test/integration/services/test_managed_project_allocation.py \
     test/integration/services/test_mcp_oauth.py \
     test/integration/services/test_mcp_delegation_lifecycle.py \
     test/integration/services/test_arq_worker_dispatch.py \

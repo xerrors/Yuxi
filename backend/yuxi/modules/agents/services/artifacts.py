@@ -9,8 +9,10 @@ import tempfile
 from pathlib import PurePosixPath
 
 from yuxi.infrastructure.file_preview import prepare_file_preview, preview_too_large
-from yuxi.infrastructure.filesystem import await_io, open_regular_file_fd
+from yuxi.infrastructure.filesystem import await_io
 from yuxi.modules.agents.repositories.tool_audit import ToolMessageAuditRepository
+from yuxi.modules.agents.scope import ActorScope
+from yuxi.modules.agents.services.thread_access import require_thread
 from yuxi.modules.extensions.skills.access import lock_accessible_shared_skill_for_file
 from yuxi.modules.identity.repositories.users import UserRepository
 from yuxi.modules.workspace.errors import FileTransferLimitError
@@ -22,8 +24,7 @@ from yuxi.modules.workspace.runtime_paths import (
     runtime_workdir_path,
     runtime_workspace_path,
 )
-from yuxi.modules.workspace.services.bindings import resolve_authorized_workdir
-from yuxi.modules.workspace.workdir import Workdir
+from yuxi.modules.workspace.services.bindings import resolve_session_workdir_path
 from yuxi.shared.datetime import format_utc_datetime
 from yuxi.shared.errors import (
     ContentTooLargeError,
@@ -47,17 +48,13 @@ async def recent_presented_artifacts(*, uid: str, db) -> dict:
     files = RuntimeFiles(uid)
     async with ToolMessageAuditRepository(db).recent_presentations(uid) as calls:
         async for call in calls:
-            try:
-                workdir = await asyncio.to_thread(Workdir.open_existing, uid, call.workdir_path)
-            except (FileNotFoundError, NotADirectoryError, PermissionError, ValueError):
-                continue
             for raw_path in call.paths or []:
                 try:
-                    path = normalize_artifact_path(runtime_workdir_path(workdir.relative_path), raw_path)
+                    path = normalize_artifact_path(runtime_workdir_path(call.workdir_path), raw_path)
                     if path in seen:
                         continue
                     await _require_skill_artifact_access(normalized_path=path, current_uid=uid, db=db)
-                    await asyncio.to_thread(_require_readable_artifact, files, path)
+                    await asyncio.to_thread(files.require_readable_file, path)
                 except (
                     FileNotFoundError,
                     NotADirectoryError,
@@ -83,13 +80,6 @@ async def recent_presented_artifacts(*, uid: str, db) -> dict:
     return {"items": items}
 
 
-def _require_readable_artifact(files: RuntimeFiles, path: str) -> None:
-    """在下载所用的用户挂载边界内核对普通文件，无需复制内容。"""
-    _, root, parts, _ = files.route(path)
-    with open_regular_file_fd(root, parts):
-        pass
-
-
 async def resolve_thread_artifact_view(
     *,
     thread_id: str,
@@ -101,15 +91,15 @@ async def resolve_thread_artifact_view(
     preview: bool = False,
 ) -> PreparedFile | PreviewResult | dict:
     """把实时授权文件导出为自动清理的 HTTP 文件响应。"""
-    access = await resolve_authorized_workdir(thread_id=thread_id, uid=current_uid, db=db, app_id=app_id)
-    normalized = _normalize_artifact_path(runtime_workspace_path(access.workdir.root_path), path)
+    scope = ActorScope(uid=current_uid, app_id=app_id)
+    normalized = await _authorize_artifact_path(thread_id=thread_id, scope=scope, db=db, path=path)
     await _require_skill_artifact_access(normalized_path=normalized, current_uid=current_uid, db=db)
     is_preview = preview and not download
     descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-artifact-", suffix=PurePosixPath(normalized).suffix)
     os.close(descriptor)
     try:
         await _copy_artifact_to_path(
-            access,
+            RuntimeFiles(current_uid),
             normalized,
             temp_path,
             MAX_FILE_PREVIEW_BYTES if is_preview else MAX_ARTIFACT_DOWNLOAD_BYTES,
@@ -153,8 +143,8 @@ async def save_thread_artifact_to_workspace_view(
     app_id: str | None = None,
 ) -> dict[str, str]:
     """把可见 artifact 复制到用户选择的工作区目录。"""
-    access = await resolve_authorized_workdir(thread_id=thread_id, uid=current_uid, db=db, app_id=app_id)
-    normalized = _normalize_artifact_path(runtime_workspace_path(access.workdir.root_path), path)
+    scope = ActorScope(uid=current_uid, app_id=app_id)
+    normalized = await _authorize_artifact_path(thread_id=thread_id, scope=scope, db=db, path=path)
     raw_destination = str(destination_path or DEFAULT_ARTIFACT_DESTINATION).strip()
     destination = PurePosixPath(raw_destination)
     if (
@@ -167,10 +157,11 @@ async def save_thread_artifact_to_workspace_view(
         raise PermissionDeniedError("invalid artifact destination")
     destination_scope = destination.as_posix()
     destination_must_exist = destination_path is not None and destination_scope != DEFAULT_ARTIFACT_DESTINATION
+    files = RuntimeFiles(current_uid)
     if destination_must_exist:
         try:
             destination_item = await asyncio.to_thread(
-                access.workdir.workspace.stat_authorized_path,
+                files.workspace.stat_authorized_path,
                 destination_scope,
                 root="/",
             )
@@ -186,7 +177,7 @@ async def save_thread_artifact_to_workspace_view(
     descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-save-artifact-")
     os.close(descriptor)
     try:
-        await _copy_artifact_to_path(access, normalized, temp_path)
+        await _copy_artifact_to_path(files, normalized, temp_path)
         file_name = PurePosixPath(normalized).name or "artifact"
         stem = PurePosixPath(file_name).stem
         suffix = PurePosixPath(file_name).suffix
@@ -196,7 +187,7 @@ async def save_thread_artifact_to_workspace_view(
             target = runtime_workspace_path(target_scope)
             try:
                 await asyncio.to_thread(
-                    access.workdir.workspace.upload_authorized_file_from_path,
+                    files.workspace.upload_authorized_file_from_path,
                     target_scope,
                     temp_path,
                     overwrite=False,
@@ -222,6 +213,13 @@ async def save_thread_artifact_to_workspace_view(
         "saved_path": target,
         "saved_artifact_url": f"/api/v1/agents/sessions/{thread_id}/artifacts/{target.lstrip('/')}",
     }
+
+
+async def _authorize_artifact_path(*, thread_id: str, scope: ActorScope, db, path: str) -> str:
+    """校验来源 Thread 的绑定，文件可读性由实际挂载判断。"""
+    agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id)
+    workdir = await resolve_session_workdir_path(agent_session=agent_session, uid=scope.uid, db=db)
+    return _normalize_artifact_path(runtime_workdir_path(workdir), path)
 
 
 def _normalize_artifact_path(workdir_path: str, path: str) -> str:
@@ -250,7 +248,7 @@ async def _require_skill_artifact_access(*, normalized_path: str, current_uid: s
 
 
 async def _copy_artifact_to_path(
-    access,
+    files: RuntimeFiles,
     normalized_path: str,
     target_path: str,
     max_bytes: int = MAX_ARTIFACT_DOWNLOAD_BYTES,
@@ -259,7 +257,7 @@ async def _copy_artifact_to_path(
     try:
         await await_io(
             asyncio.to_thread(
-                RuntimeFiles(access.uid).download_to_path,
+                files.download_to_path,
                 normalized_path,
                 target_path,
                 max_bytes,
@@ -271,5 +269,5 @@ async def _copy_artifact_to_path(
         raise InvalidOperationError("artifact path is not a regular file") from exc
     except FileTransferLimitError as exc:
         raise ContentTooLargeError("artifact exceeds transfer limit") from exc
-    except (FileNotFoundError, ValueError) as exc:
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
         raise ResourceNotFoundError("artifact not found") from exc

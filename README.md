@@ -44,7 +44,7 @@ docker compose --profile container up --build -d
 
 Windows PowerShell 用户将 `./scripts/init.sh` 换成 `.\scripts\init.ps1`。
 
-试用 [v0.8.1.beta1](https://github.com/xerrors/Yuxi/releases/tag/v0.8.1.beta1) 时，将克隆命令中的标签改为 `v0.8.1.beta1`。[完整安装指南](https://xerrors.github.io/Yuxi/intro/quick-start) · [生产部署与隔离](docs/advanced/deployment.md)
+试用 [v0.8.1.beta2](https://github.com/xerrors/Yuxi/releases/tag/v0.8.1.beta2) 时，将克隆命令中的标签改为 `v0.8.1.beta2`。[完整安装指南](https://xerrors.github.io/Yuxi/intro/quick-start) · [生产部署与隔离](docs/advanced/deployment.md)
 
 ## 能力展示
 

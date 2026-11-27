@@ -29,6 +29,7 @@ from yuxi.modules.agents.services.queue_control import pause_pending_queue
 from yuxi.modules.agents.services.scheduler import claim_next_input, deliver
 from yuxi.modules.agents.services.thread_access import require_thread
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
+from yuxi.modules.workspace.services.bindings import ensure_session_workdir_available
 from yuxi.shared.datetime import format_utc_datetime, utc_now
 from yuxi.shared.errors import InvalidInputError, InvalidOperationError, ResourceNotFoundError, StateConflictError
 
@@ -230,9 +231,10 @@ async def continue_queue(*, db: AsyncSession, scope: ActorScope, thread_id: str,
     if await AgentTurnRepository(db).lock_active_for_thread(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id):
         raise StateConflictError("当前 Turn 尚未结束")
 
+    await ensure_session_workdir_available(agent_session=agent_session, uid=scope.uid, db=db)
     agent_session.queue_paused = False
-    dispatch = await claim_next_input(db=db, agent_session=agent_session)
-    run = await AgentRunRepository(db).get_run(dispatch.run_id) if dispatch else None
+    run_id = await claim_next_input(db=db, agent_session=agent_session)
+    run = await AgentRunRepository(db).get_run(run_id) if run_id else None
     receipt = await receipt_repo.create(
         receipt_id=str(uuid.uuid4()),
         idempotency_key=idempotency_key,
@@ -241,12 +243,12 @@ async def continue_queue(*, db: AsyncSession, scope: ActorScope, thread_id: str,
         thread_id=thread_id,
         event_type=event_type,
         intent_hash=intent_hash,
-        turn_id=run.turn_id if dispatch else None,
-        run_id=dispatch.run_id if dispatch else None,
+        turn_id=run.turn_id if run else None,
+        run_id=run_id,
     )
     await db.commit()
-    if dispatch:
-        await deliver(dispatch)
+    if run_id:
+        await deliver(run_id)
     return control_accepted(receipt)
 
 
@@ -316,6 +318,7 @@ async def promote_input(*, db: AsyncSession, scope: ActorScope, thread_id: str, 
         raise ResourceNotFoundError("Input 不存在")
     if item.status != "pending" or agent_session.status != "active":
         raise StateConflictError("Input 已被领取、取消或会话已归档")
+    await ensure_session_workdir_available(agent_session=agent_session, uid=scope.uid, db=db)
     active = await AgentTurnRepository(db).lock_active_for_thread(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
     if active is not None and active.status in {"waiting", "cancelling"}:
         raise StateConflictError("当前任务正在等待或取消清理，不能转为引导")

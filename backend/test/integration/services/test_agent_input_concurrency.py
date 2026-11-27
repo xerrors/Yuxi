@@ -20,9 +20,6 @@ from test.integration.services.agent_input_fixtures import (
     drop_input_schema as _drop_schema,
 )
 from test.integration.services.agent_input_fixtures import (
-    input_workdir_binding as _binding,
-)
-from test.integration.services.agent_input_fixtures import (
     queue_inputs as _queue_inputs,
 )
 from yuxi.modules.agents.services.run_lifecycle import settle_run
@@ -52,9 +49,9 @@ async def test_concurrent_claims_consume_only_fifo_head() -> None:
             async with sessions() as db:
                 await start.wait()
                 agent_session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
-                dispatch = await scheduler.claim_next_input(db=db, agent_session=agent_session, binding=_binding())
+                claimed_run_id = await scheduler.claim_next_input(db=db, agent_session=agent_session)
                 await db.commit()
-                return dispatch.run_id if dispatch else None
+                return claimed_run_id
 
         contenders = [asyncio.create_task(claim()), asyncio.create_task(claim())]
         start.set()
@@ -83,8 +80,8 @@ async def test_recovery_republishes_committed_pending_run(monkeypatch) -> None:
         await _queue_inputs(sessions, count=1)
         async with sessions() as db:
             agent_session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
-            dispatch = await scheduler.claim_next_input(db=db, agent_session=agent_session, binding=_binding())
-            assert dispatch is not None
+            claimed_run_id = await scheduler.claim_next_input(db=db, agent_session=agent_session)
+            assert claimed_run_id is not None
             await db.commit()
 
         @asynccontextmanager
@@ -95,17 +92,17 @@ async def test_recovery_republishes_committed_pending_run(monkeypatch) -> None:
 
         sent = []
 
-        async def record_delivery(candidate) -> bool:
+        async def record_delivery(run_id: str) -> bool:
             """记录补偿将要投递的持久 Run ID。"""
-            sent.append(candidate.run_id)
+            sent.append(run_id)
             return True
 
         monkeypatch.setattr(scheduler.pg_manager, "get_async_session_context", test_session)
         monkeypatch.setattr(scheduler, "deliver", record_delivery)
         await scheduler.recover_pending_dispatches()
-        assert sent == [dispatch.run_id]
+        assert sent == [claimed_run_id]
         async with sessions() as db:
-            run = await db.get(AgentRun, dispatch.run_id)
+            run = await db.get(AgentRun, claimed_run_id)
             assert run.status == "pending" and (await db.get(AgentInput, "input-0")).consumed_run_id == run.id
     finally:
         await _drop_schema(schema, admin_engine, engine)
@@ -144,9 +141,9 @@ async def test_completion_winning_thread_lock_rejects_stale_cancel() -> None:
         await _queue_inputs(sessions, count=1)
         async with sessions() as db:
             agent_session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
-            dispatch = await scheduler.claim_next_input(db=db, agent_session=agent_session, binding=_binding())
-            assert dispatch is not None
-            run = await db.get(AgentRun, dispatch.run_id)
+            claimed_run_id = await scheduler.claim_next_input(db=db, agent_session=agent_session)
+            assert claimed_run_id is not None
+            run = await db.get(AgentRun, claimed_run_id)
             _, acquired = await AgentRunRepository(db).mark_running(run.id, worker_id="owner-a", lease_seconds=60)
             assert acquired is True
             output = Message(
@@ -174,7 +171,7 @@ async def test_completion_winning_thread_lock_rejects_stale_cancel() -> None:
                 lock_held.set()
                 await control_started.wait()
                 await asyncio.sleep(0.05)
-                current = await AgentRunRepository(db).get_run(dispatch.run_id)
+                current = await AgentRunRepository(db).get_run(claimed_run_id)
                 settled = await settle_run(db=db, run=current, worker_id="owner-a", status="completed", token_usage=None)
                 await db.commit()
                 return settled
@@ -198,7 +195,7 @@ async def test_completion_winning_thread_lock_rejects_stale_cancel() -> None:
         settled, rejected = await asyncio.gather(finish(), send_control())
         assert (settled.status, settled.changed, rejected) == ("completed", True, "state_conflict")
         async with sessions() as db:
-            run = await db.get(AgentRun, dispatch.run_id)
+            run = await db.get(AgentRun, claimed_run_id)
             turn = await db.get(AgentTurn, turn_id)
             agent_session = await SessionRepository(db).get_session_by_thread_id("input-thread")
             assert run.status == "completed" and turn.status == "completed"
@@ -219,7 +216,7 @@ async def test_same_key_concurrent_cancel_replays_receipt_after_thread_lock(monk
         if control == "cancel_turn":
             async with sessions() as db:
                 agent_session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
-                dispatch = await scheduler.claim_next_input(db=db, agent_session=agent_session, binding=_binding())
+                claimed_run_id = await scheduler.claim_next_input(db=db, agent_session=agent_session)
                 await db.commit()
 
             async def ignore_external(*args, **kwargs):
@@ -261,7 +258,7 @@ async def test_same_key_concurrent_cancel_replays_receipt_after_thread_lock(monk
         async with sessions() as db:
             assert await db.scalar(select(func.count()).select_from(AgentInputReceipt)) == 2
             if control == "cancel_turn":
-                target = await db.get(AgentRun, dispatch.run_id)
+                target = await db.get(AgentRun, claimed_run_id)
                 assert first["turn_id"] == target.turn_id
                 assert (await db.get(AgentTurn, target.turn_id)).status == "cancelled"
             else:
@@ -284,8 +281,8 @@ async def test_cancel_partial_snapshot_only_updates_existing_public_message(case
         await _queue_inputs(sessions, count=1)
         async with sessions() as db:
             agent_session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
-            dispatch = await scheduler.claim_next_input(db=db, agent_session=agent_session, binding=_binding())
-            run, acquired = await AgentRunRepository(db).mark_running(dispatch.run_id, worker_id="owner", lease_seconds=60)
+            claimed_run_id = await scheduler.claim_next_input(db=db, agent_session=agent_session)
+            run, acquired = await AgentRunRepository(db).mark_running(claimed_run_id, worker_id="owner", lease_seconds=60)
             assert acquired
             message = Message(
                 session_record_id=agent_session.id,
@@ -320,7 +317,7 @@ async def test_cancel_partial_snapshot_only_updates_existing_public_message(case
             if case == "tool":
                 snapshot["type"] = "function_call"
             kwargs = dict(
-                run_id=dispatch.run_id,
+                run_id=claimed_run_id,
                 worker_id="wrong" if case == "wrong_owner" else "owner",
                 operation_id="model",
                 role="assistant",

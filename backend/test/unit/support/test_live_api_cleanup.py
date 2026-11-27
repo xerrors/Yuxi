@@ -382,8 +382,8 @@ async def test_cleanup_stops_when_cancelled_input_remains_pending(monkeypatch):
     assert destructive_paths == []
 
 
-async def test_remove_test_workdir_stays_inside_project_boundary(tmp_path, monkeypatch):
-    workdir_path = "projects/11111111-1111-4111-8111-111111111111"
+@pytest.mark.parametrize("workdir_path", ["projects/11111111-1111-4111-8111-111111111111", "agents/tasks/2026-11-27/new-chat-a1b2c3"])
+async def test_remove_test_workdir_stays_inside_project_boundary(tmp_path, monkeypatch, workdir_path):
     project = tmp_path / workdir_path
     project.mkdir(parents=True)
     (project / "artifact.txt").write_text("test", encoding="utf-8")
@@ -394,13 +394,14 @@ async def test_remove_test_workdir_stays_inside_project_boundary(tmp_path, monke
     assert not project.exists()
 
 
-async def test_remove_test_workdir_rejects_non_project_path(tmp_path, monkeypatch):
+@pytest.mark.parametrize("workdir_path", ["agents/skills", "agents/tasks", "agents/tasks/2026-11-27", "agents/tasks/2026-11-27/custom"])
+async def test_remove_test_workdir_rejects_non_managed_path(tmp_path, monkeypatch, workdir_path):
     outside = tmp_path / "agents"
     outside.mkdir()
     monkeypatch.setattr("test.live_api_cleanup.user_workdir_host_dir", lambda _uid, _path: outside)
 
-    with pytest.raises(RuntimeError, match="non-project Workdir"):
-        remove_test_workdir("test-user", "agents/skills")
+    with pytest.raises(RuntimeError, match="non-managed Workdir"):
+        remove_test_workdir("test-user", workdir_path)
 
     assert outside.exists()
 

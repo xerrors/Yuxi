@@ -8,8 +8,6 @@
     :processing="isProcessing"
     :reply-loading="isReplyLoading"
     :suppress-refs="shouldSuppressRefsForApproval()"
-    :config-notice="currentThreadConfigNotice"
-    :config-notice-scroll-version="configNoticeScrollVersion"
     :mention-config="mentionConfig"
     :cooperation-view="cooperationToolView"
     :knowledge-bases="availableKnowledgeBases"
@@ -102,7 +100,7 @@
               <span class="queued-request-status" :title="input.attachment_error || ''">
                 {{
                   input.attachment_status === 'preparing'
-                    ? '附件准备中'
+                    ? (input.attachment_error ? '附件准备受阻' : '附件准备中')
                     : input.kind === 'steer'
                       ? '等待引导'
                       : '排队中'
@@ -145,13 +143,14 @@
           :class="{ 'has-tool-approval': currentToolApprovalVisible }"
         >
           <div
-            v-if="currentChatId && ['unavailable', 'error'].includes(sessionAgentStatus)"
+            v-if="currentChatId && !threadArchived && ['unavailable', 'workdir-unavailable', 'error'].includes(sessionAgentStatus)"
             class="agent-availability-notice"
             role="status"
           >
-            <span v-if="sessionAgentStatus === 'unavailable'">智能体当前不可用</span>
+            <span v-if="threadWorkdirUnavailable">{{ workdirUnavailableMessage }}</span>
+            <span v-else-if="sessionAgentStatus === 'unavailable'">智能体当前不可用</span>
             <template v-else-if="sessionAgentStatus === 'error'">
-              <span>智能体加载失败，请重试</span>
+              <span>会话执行条件加载失败，请重试</span>
               <a-button
                 type="link"
                 size="small"
@@ -168,7 +167,8 @@
             :questions="currentTurnAction?.questions"
             :kind="currentTurnAction?.kind"
             :action-requests="currentTurnAction?.actionRequests"
-            :error="approvalError"
+            :error="approvalError || (threadWorkdirUnavailable ? workdirUnavailableMessage : '')"
+            :submit-disabled="threadWorkdirUnavailable"
             @submit="submitTurnAction"
             @cancel="cancelTurnAction"
           />
@@ -266,6 +266,7 @@ import { message } from 'ant-design-vue'
 import { ArrowUpFromLine, CornerDownRight, Play, Trash2, X } from '@lucide/vue'
 import { storeToRefs } from 'pinia'
 import { agentApi, threadApi } from '@/apis'
+import { resolveApiErrorMessage } from '@/apis/base'
 import { mcpApi } from '@/apis/mcp_api'
 import { AgentValidator, normalizeAgentConfigurableItems, useAgentStore } from '@/modules/agents'
 import ModelSelectorComponent from '@/modules/agents/ui/ModelSelectorComponent.vue'
@@ -289,7 +290,7 @@ import { createSessionInput, createInputRequestId } from '../model/sessionInput'
 import { useSessionRuntimeStore } from '../model/sessionRuntime'
 import { useThreadTurnAction } from '../model/useThreadTurnAction'
 import { useAgentMentionConfig } from '../model/useAgentMentionConfig'
-import { useSessionPluginMentions } from '../model/useSessionPluginMentions'
+import { useSessionMentionResources } from '../model/useSessionMentionResources'
 import { getToolCallId, parseToolCallResult } from '../model/toolCallProjection'
 import { collectCooperationTasks } from '../model/cooperationToolView'
 import { createThreadForContext } from '../model/threadCreation'
@@ -330,6 +331,7 @@ const agentStore = useAgentStore()
 const chatThreadsStore = useChatThreadsStore()
 const configStore = useConfigStore()
 const userStore = useUserStore()
+const authToken = () => userStore.token
 const { agents, selectedAgentId, agentDetails, availableKnowledgeBases } = storeToRefs(agentStore)
 const { threadCreationInFlight } = storeToRefs(chatThreadsStore)
 const currentChatId = ref(props.initialThreadId || null)
@@ -415,21 +417,24 @@ const attachmentInitialFiles = ref([])
 const attachmentInitialFilesKey = ref(0)
 const selectedProjectId = ref(AUTO_PROJECT_ID)
 const threadCreationRequest = ref(null)
-const threadConfigNoticeMap = ref({})
-const threadPendingConfigNoticeMap = ref({})
-const threadConfigSnapshotMap = ref({})
-const configNoticeSyncDepth = ref(0)
-const configNoticeScrollVersion = ref(0)
 
 const currentAgentId = computed(() => {
   if (currentChatId.value) return currentThread.value?.agent.id
   return props.agentId || selectedAgentId.value
 })
 
-const { status: sessionAgentStatus, refresh: refreshSessionAgent } = useSessionAgentAvailability(
+const workdirUnavailableMessage = '该对话的工作目录已不存在或不可访问，只能查看历史记录。'
+const {
+  status: sessionAgentStatus,
+  refresh: refreshSessionAgent,
+  handleExecutionError
+} = useSessionAgentAvailability(
   currentChatId,
-  (agentId) => agentStore.fetchAgentDetail(agentId, true, { notify: false })
+  authToken,
+  (agentId) => agentStore.fetchAgentDetail(agentId, true, { notify: false }),
+  agentApi.checkThreadWorkdir
 )
+const threadWorkdirUnavailable = computed(() => sessionAgentStatus.value === 'workdir-unavailable')
 /** 归档会话只读：后端会拒绝新输入，前端同步禁用而不是让发送失败。 */
 const threadArchived = computed(() => currentThread.value?.yuxi?.archived === true)
 
@@ -572,23 +577,18 @@ watch(
   { immediate: true }
 )
 
-const sessionMentionPlugins = useSessionPluginMentions(currentChatId, workspaceActive)
+const sessionMentionResources = useSessionMentionResources(currentChatId, workspaceActive, authToken)
 const { mentionConfig } = useAgentMentionConfig({
   agents,
   currentThreadAttachments,
   configurableItems,
   agentConfig,
-  sessionPlugins: sessionMentionPlugins,
+  sessionResources: sessionMentionResources,
   mcpServers: mentionMcpServers
 })
 
 const currentThreadMessages = computed(() => threadMessages.value[currentChatId.value] || [])
 const { runGroups, ongoingRunMessages } = useThreadMessageProjection(currentChatId)
-const currentThreadHasHistory = computed(() => currentThreadMessages.value.length > 0)
-const currentThreadConfigNotice = computed(() => {
-  if (!currentChatId.value) return null
-  return threadConfigNoticeMap.value[currentChatId.value] || null
-})
 
 const {
   action: currentTurnAction,
@@ -601,7 +601,8 @@ const {
 } = useThreadTurnAction({
   threadId: currentChatId,
   enabled: computed(() => userStore.isLoggedIn && !threadArchived.value),
-  runtime: sessionRuntime
+  runtime: sessionRuntime,
+  onExecutionError: handleExecutionError
 })
 const shouldSuppressRefsForApproval = () => Boolean(currentThreadState.value?.pendingInterrupt)
 
@@ -658,13 +659,12 @@ const queuePausedMessage = '后续队列已暂停。发送新消息将优先处�
 const hasDraftContent = computed(() =>
   Boolean(String(userInput.value || '').trim() || agentInputAreaRef.value?.hasImages)
 )
-const shouldShowStopButton = computed(
-  () =>
-    (isStreaming.value || currentThreadState.value?.cooperationWaiting) && !hasDraftContent.value
-)
+const shouldStopInsteadOfSend = (hasDraft) =>
+  (isStreaming.value || currentThreadState.value?.cooperationWaiting) &&
+  (!agentExecutionAvailable.value || !hasDraft)
+const shouldShowStopButton = computed(() => shouldStopInsteadOfSend(hasDraftContent.value))
 const inputActionBlocked = computed(
   () =>
-    !agentExecutionAvailable.value ||
     props.sendDisabled ||
     sendCooldownActive.value ||
     isLoadingMessages.value ||
@@ -673,7 +673,13 @@ const inputActionBlocked = computed(
     Boolean(currentThreadState.value?.cancellationPending)
 )
 const inputSubmissionBlocked = computed(
-  () => inputActionBlocked.value || Boolean(currentThreadState.value?.approvalModeSaving)
+  () => !agentExecutionAvailable.value || inputActionBlocked.value || Boolean(currentThreadState.value?.approvalModeSaving)
+)
+const stopBlocked = computed(
+  () => threadArchived.value ||
+    !currentThreadState.value?.activeRunId ||
+    !currentThreadState.value?.currentTurnId ||
+    Boolean(currentThreadState.value?.cancellationPending)
 )
 const canSubmitSteer = computed(
   () =>
@@ -717,7 +723,7 @@ const replyLoadingText = computed(() => {
 })
 const isSendButtonDisabled = computed(
   () => shouldShowStopButton.value
-    ? inputActionBlocked.value
+    ? stopBlocked.value
     : inputSubmissionBlocked.value || (!hasDraftContent.value && !isProcessing.value)
 )
 
@@ -730,129 +736,6 @@ const startSendCooldown = () => {
     sendCooldownActive.value = false
     sendCooldownTimer = null
   }, 2000)
-}
-
-const CONFIG_CHANGE_NOTICE_MESSAGE =
-  '本会话沿用创建时的智能体配置；之后的修改只对新会话生效，建议新建对话以使用最新配置。'
-
-const withConfigNoticeSync = async (task) => {
-  configNoticeSyncDepth.value += 1
-  try {
-    return await task()
-  } finally {
-    configNoticeSyncDepth.value = Math.max(0, configNoticeSyncDepth.value - 1)
-  }
-}
-
-const buildThreadConfigSnapshot = () => {
-  return {
-    agentId: currentAgentId.value || '',
-    configJson: JSON.stringify(agentConfig.value || {})
-  }
-}
-
-const syncThreadConfigSnapshot = (threadId, options = {}) => {
-  if (!threadId) return
-
-  const { overwrite = true } = options
-  if (!overwrite && threadConfigSnapshotMap.value[threadId]) return
-  if (threadPendingConfigNoticeMap.value[threadId]) return
-
-  // 线程切换时先记录当前 UI 的配置快照，避免同步 thread 绑定配置时误报。
-  threadConfigSnapshotMap.value = {
-    ...threadConfigSnapshotMap.value,
-    [threadId]: buildThreadConfigSnapshot()
-  }
-}
-
-const upsertThreadConfigNotice = (threadId, insertAfterGroupCount) => {
-  if (!threadId) return
-
-  const existingNotice = threadConfigNoticeMap.value[threadId]
-  const nextNotice = {
-    id: existingNotice?.id || `config-change-notice-${threadId}`,
-    message: existingNotice?.message || CONFIG_CHANGE_NOTICE_MESSAGE,
-    insertAfterGroupCount
-  }
-  const shouldScroll =
-    !existingNotice || existingNotice.insertAfterGroupCount !== insertAfterGroupCount
-
-  threadConfigNoticeMap.value = {
-    ...threadConfigNoticeMap.value,
-    [threadId]: nextNotice
-  }
-
-  if (threadPendingConfigNoticeMap.value[threadId]) {
-    const nextPendingNotices = { ...threadPendingConfigNoticeMap.value }
-    delete nextPendingNotices[threadId]
-    threadPendingConfigNoticeMap.value = nextPendingNotices
-  }
-
-  if (shouldScroll) {
-    configNoticeScrollVersion.value += 1
-  }
-}
-
-const queuePendingThreadConfigNotice = (threadId) => {
-  if (!threadId) return
-  threadPendingConfigNoticeMap.value = {
-    ...threadPendingConfigNoticeMap.value,
-    [threadId]: {
-      id: `config-change-notice-${threadId}`,
-      message: CONFIG_CHANGE_NOTICE_MESSAGE
-    }
-  }
-}
-
-const flushPendingThreadConfigNotice = (threadId) => {
-  if (
-    !threadId ||
-    !currentThreadHasHistory.value ||
-    !threadPendingConfigNoticeMap.value[threadId]
-  ) {
-    return
-  }
-
-  upsertThreadConfigNotice(threadId, runGroups.value.length)
-}
-
-const maybeInsertThreadConfigNotice = () => {
-  const threadId = currentChatId.value
-  if (!threadId || configNoticeSyncDepth.value > 0) {
-    return
-  }
-
-  const previousSnapshot = threadConfigSnapshotMap.value[threadId]
-  const currentSnapshot = buildThreadConfigSnapshot()
-
-  if (!previousSnapshot) {
-    threadConfigSnapshotMap.value = {
-      ...threadConfigSnapshotMap.value,
-      [threadId]: currentSnapshot
-    }
-    return
-  }
-
-  if (
-    previousSnapshot.agentId === currentSnapshot.agentId &&
-    previousSnapshot.configJson === currentSnapshot.configJson
-  ) {
-    return
-  }
-
-  if (currentThreadHasHistory.value) {
-    upsertThreadConfigNotice(threadId, runGroups.value.length)
-  } else if (isLoadingMessages.value) {
-    // 历史线程仍在加载时先挂起提示，避免消息返回后把变更误当成新的基线。
-    queuePendingThreadConfigNotice(threadId)
-  } else {
-    return
-  }
-
-  threadConfigSnapshotMap.value = {
-    ...threadConfigSnapshotMap.value,
-    [threadId]: currentSnapshot
-  }
 }
 
 // 布局只读取视口几何；阅读锚点、滚动与分页由 ThreadTimeline 拥有。
@@ -890,12 +773,17 @@ const fetchThreadAttachments = async (threadId) => {
 
 const handleArtifactSaved = async () => {
   const threadId = currentChatId.value
-  if (!threadId) return
+  const state = peekThreadState(threadId)
+  if (!state) return
   await fetchThreadAttachments(threadId)
-  if (currentChatId.value === threadId && workspaceActive.value) emit('artifact-saved', threadId)
+  if (
+    sessionRuntime.isCurrentThreadState(threadId, state) &&
+    currentChatId.value === threadId &&
+    workspaceActive.value
+  ) emit('artifact-saved', threadId)
 }
 
-const createActiveThread = async () => {
+const createActiveThread = async (text) => {
   if (currentChatId.value) return currentChatId.value
   if (!props.isNewSession) return null
   const selectedAgent = currentAgentId.value
@@ -911,7 +799,8 @@ const createActiveThread = async () => {
     request = {
       ...creationContext,
       id: createInputRequestId(),
-      metadata: { tool_approval_mode: currentToolApprovalMode.value }
+      metadata: { tool_approval_mode: currentToolApprovalMode.value },
+      workdirNamingText: selectedProject === AUTO_PROJECT_ID ? text : undefined
     }
     threadCreationRequest.value = request
   }
@@ -929,7 +818,8 @@ const createActiveThread = async () => {
       create: (stableRequestId) =>
         chatThreadsStore.createThread(selectedAgent, null, request.metadata, {
           requestId: stableRequestId,
-          projectId: projectId || undefined
+          projectId: projectId || undefined,
+          workdirNamingText: request.workdirNamingText
         })
     })
     if (!thread) throw new Error('创建对话失败')
@@ -1026,10 +916,6 @@ async function initializeThreadInput({ threadId }) {
       fetchThreadAttachments(threadId),
       refreshSessionAgent(threadId, state.detail.agent.id)
     ])
-    if (threadId !== currentChatId.value || !sessionRuntime.isCurrentThreadState(threadId, state))
-      return
-    if (sessionAgentStatus.value === 'ready')
-      await withConfigNoticeSync(async () => syncThreadConfigSnapshot(threadId))
   } finally {
     preparingInputs.delete(state)
   }
@@ -1037,10 +923,11 @@ async function initializeThreadInput({ threadId }) {
 
 const handlePromoteQueuedInput = async (inputId) => {
   const threadId = currentChatId.value
-  if (!threadId || promotingInputIds.has(inputId)) return
+  const state = peekThreadState(threadId)
+  if (!state || promotingInputIds.has(inputId)) return
   promotingInputIds.add(inputId)
   try {
-    if (await promoteInput(threadId, inputId)) message.success('已转为引导')
+    if (await promoteInput(threadId, inputId, handleExecutionError)) message.success('已转为引导')
   } finally {
     promotingInputIds.delete(inputId)
   }
@@ -1064,7 +951,7 @@ const handleContinueQueue = async () => {
   const threadId = currentChatId.value
   if (!threadId || currentThreadState.value?.continueQueueInFlight) return
 
-  if (await continueQueue(threadId)) {
+  if (await continueQueue(threadId, handleExecutionError)) {
     message.success('队列已继续')
   }
 }
@@ -1124,6 +1011,7 @@ const sessionInput = createSessionInput({
     await fetchThreadAttachments(threadId)
   },
   onRejected: async (threadId, draft, error, { accepted, restore }) => {
+    handleExecutionError(threadId, error)
     if (restore && !draft.fromWidget && currentChatId.value === threadId) {
       userInput.value = [draft.text, userInput.value].filter(Boolean).join('\n')
       agentInputAreaRef.value?.restoreImages?.(draft.images)
@@ -1185,7 +1073,8 @@ const handleSendMessage = async ({
     attachments: fromWidget
       ? []
       : currentPendingThreadAttachments.value.map((file) => ({ ...file })),
-    modelSpec: currentModelSpec.value || null,
+    // 只发送用户选择的覆盖值，默认模型由会话快照决定。
+    modelSpec: selectedModelByThread[threadId || DRAFT_MODEL_KEY],
     toolApprovalMode: currentToolApprovalMode.value,
     mode
   }
@@ -1193,14 +1082,14 @@ const handleSendMessage = async ({
     const consumeDraft = !fromWidget && userInput.value.trim() === text
     if (consumeDraft) userInput.value = ''
     try {
-      threadId = await ensureActiveThread()
+      threadId = await ensureActiveThread(draft.text)
       if (!threadId) throw new Error('创建对话未返回线程')
-    } catch {
+    } catch (error) {
       if (consumeDraft) {
         userInput.value = [draft.text, userInput.value].filter(Boolean).join('\n')
         agentInputAreaRef.value?.restoreImages?.(draft.images)
       }
-      message.error('创建对话失败，请重试')
+      message.error(resolveApiErrorMessage(error, '创建对话失败，请重试'))
       return
     }
     promoteDraftSelection(selectedModelByThread, threadId)
@@ -1234,7 +1123,10 @@ const handleContextCompression = async () => {
     if (response?.status === 'completed') message.success('上下文压缩完成')
     else message.info('当前没有足够的历史消息可压缩')
   } catch (error) {
-    handleChatError(error, 'compress_context')
+    if (sessionRuntime.isCurrentThreadState(threadId, threadState)) {
+      handleExecutionError(threadId, error)
+      handleChatError(error, 'compress_context')
+    }
   } finally {
     if (sessionRuntime.isCurrentThreadState(threadId, threadState))
       threadState.contextCompressing = false
@@ -1243,18 +1135,9 @@ const handleContextCompression = async () => {
 
 // 发送或中断
 const handleSendOrStop = async (payload) => {
-  if (sendCooldownActive.value) {
-    return
-  }
-
   const threadId = currentChatId.value
-  const threadState = getThreadState(threadId)
-  const hasNewInput = Boolean(String(userInput.value || '').trim() || payload?.images?.length)
-  if (
-    threadState?.activeRunId &&
-    (threadState.isStreaming || threadState.cooperationWaiting) &&
-    !hasNewInput
-  ) {
+  if (shouldStopInsteadOfSend(hasDraftContent.value || Boolean(payload?.images?.length))) {
+    if (stopBlocked.value) return
     try {
       if (!(await requestTurnCancellation(threadId))) return
       message.info('已发送取消请求')
@@ -1300,6 +1183,8 @@ defineExpose({
       isWaitingForUserAction.value
   ),
   compressContext: handleContextCompression,
+  handleExecutionError,
+  threadWorkdirUnavailable,
   refreshAttachments: fetchThreadAttachments,
   getExportPayload: buildExportPayload,
   selectThreadFromRoute,
@@ -1339,30 +1224,6 @@ watch(
       messageInputStageRef.value?.querySelector('[role="dialog"]')?.focus()
       pendingActionFocusTurnId.value = null
     }
-  }
-)
-
-watch(
-  currentThreadMessages,
-  () => {
-    if (currentThreadHasHistory.value) {
-      flushPendingThreadConfigNotice(currentChatId.value)
-      syncThreadConfigSnapshot(currentChatId.value, { overwrite: false })
-    }
-  },
-  { deep: false }
-)
-
-watch(currentAgentId, (newAgentId, oldAgentId) => {
-  if (oldAgentId === undefined || newAgentId === oldAgentId) return
-  maybeInsertThreadConfigNotice()
-})
-
-watch(
-  () => JSON.stringify(agentConfig.value || {}),
-  (newConfigJson, oldConfigJson) => {
-    if (oldConfigJson === undefined || newConfigJson === oldConfigJson) return
-    maybeInsertThreadConfigNotice()
   }
 )
 

@@ -43,8 +43,8 @@ export async function mountSessionWorkspace(t, readHistory = async () => {}, opt
   const { configureApiAuth } = await server.ssrLoadModule('/src/apis/auth_context.js')
   const originalFetch = globalThis.fetch
   t.mock.method(globalThis, 'fetch', (url, init) => {
-    if (String(url).startsWith('/api/mention/plugins?') && (init?.method || 'GET') === 'GET') {
-      return Promise.resolve(Response.json([]))
+    if (String(url).startsWith('/api/mention/resources?') && (init?.method || 'GET') === 'GET') {
+      return Promise.resolve(Response.json({}))
     }
     return originalFetch(url, init)
   })
@@ -64,6 +64,7 @@ export async function mountSessionWorkspace(t, readHistory = async () => {}, opt
   const { mcpApi } = await server.ssrLoadModule('/src/apis/mcp_api.js')
   t.mock.method(mcpApi, 'getMcpServers', async () => ({ success: true, data: [] }))
   t.mock.method(agentApi, 'getPublicThread', async (id) => ({ id, agent: { id: 'agent' }, yuxi: {} }))
+  t.mock.method(agentApi, 'checkThreadWorkdir', async () => {})
   t.mock.method(threadApi, 'getThreads', async () => ({ data: [], has_more: false }))
   const { useAgentStore } = await server.ssrLoadModule('/src/modules/agents/model/agent.js')
   const agentStore = useAgentStore()

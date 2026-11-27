@@ -1,7 +1,7 @@
 ---
 name: chat-widgets
 description: "在普通聊天中直接展示图片、图文卡片和数值图表，或用简短表单收集用户回答。展示图片或截图时优先 Image/ImageGroup；图片需要配合说明、参数或比较时组合 Card、Row、Col；分类比较用柱状图，时间趋势用折线图；需要填写多个条件时用 Form、文本输入、单选和日期。按用途主动读取本 Skill，无需用户指定组件或 JSON；普通文字回答保持 Markdown。"
-version: "2026.11.19.1"
+version: "2026.11.27"
 ---
 
 # 对话组件
@@ -91,12 +91,12 @@ version: "2026.11.19.1"
   "children": [
     {
       "type": "Image",
-      "path": "/home/user/workspace/projects/<project-dir>/first.png",
+      "path": "/home/user/workspace/<实际工作目录>/first.png",
       "alt": "第一张生成图片"
     },
     {
       "type": "Image",
-      "path": "/home/user/workspace/projects/<project-dir>/second.png",
+      "path": "/home/user/workspace/<实际工作目录>/second.png",
       "alt": "第二张生成图片",
       "caption": "另一个方案"
     }
@@ -244,7 +244,7 @@ Chart.data 为 0–60 条记录，按数组元素数量计数，与 JSON 文本�
 
 绘制每日最高/最低温时优先使用逐日预报字段。小时预报采样的最大/最小值只标为“采样最高/最低温”，缺少全天时段时在图卡中注明；未来的预报值不能称为实测值。
 
-Image 使用 src 或 path 之一，alt 描述图片内容。src 接受无凭据的 HTTPS URL 或同源 `/...` 路径；不能用协议相对 URL、data/file/javascript URL。path 使用实际图片文件的沙盒绝对路径，例如 `{"type":"Image","path":"/home/user/workspace/projects/<project-dir>/generated-image.png","alt":"生成的图片"}`，沿用工具返回的真实路径。生成图片保存在当前 Project 工作目录；Home 或临时目录中的图片先保存到当前工作目录再展示。前端通过当前会话鉴权读取，无需调用 present_artifacts。直接填文件路径，不拼接 API URL 或 Token，不使用路径跳转或宿主机路径。只使用已知存在的图片地址，不猜测路径；图片来源和详细说明放围栏外，简短说明可用 caption。尚未实际读取图片时，alt 和说明沿用用户描述，保留已知内容。单张图片默认保留原始宽高比，展示范围不超过正文宽度和 400px 高度；只有用户需要特定比例时才显式设置 aspectRatio，并按需要选择 cover 或 contain（默认）。ImageGroup 的缩略图统一使用 5:4 和 cover；点击后以完整比例预览，支持前后切换、方向键和 Esc 关闭。
+Image 使用 src 或 path 之一，alt 描述图片内容。src 接受无凭据的 HTTPS URL 或同源 `/...` 路径；不能用协议相对 URL、data/file/javascript URL。path 使用实际图片文件的沙盒绝对路径，例如 `{"type":"Image","path":"/home/user/workspace/<实际工作目录>/generated-image.png","alt":"生成的图片"}`，沿用工具返回的真实路径。生成图片保存在当前 Project 工作目录；Home 或临时目录中的图片先保存到当前工作目录再展示。前端通过当前会话鉴权读取，无需调用 present_artifacts。直接填文件路径，不拼接 API URL 或 Token，不使用路径跳转或宿主机路径。只使用已知存在的图片地址，不猜测路径；图片来源和详细说明放围栏外，简短说明可用 caption。尚未实际读取图片时，alt 和说明沿用用户描述，保留已知内容。单张图片默认保留原始宽高比，展示范围不超过正文宽度和 400px 高度；只有用户需要特定比例时才显式设置 aspectRatio，并按需要选择 cover 或 contain（默认）。ImageGroup 的缩略图统一使用 5:4 和 cover；点击后以完整比例预览，支持前后切换、方向键和 Esc 关闭。
 
 ## 字段与交互边界
 

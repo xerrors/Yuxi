@@ -16,7 +16,7 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 - `api`：FastAPI API 服务，挂载 `backend/yuxi` 和测试目录；API 与 worker 的源码修改通过显式重启生效。
 - `worker`：ARQ worker，执行已经派发的 AgentRun 与注册的 后台作业，并周期触发用户自建 Agent 定时任务；三者分别使用 PostgreSQL 中的运行租约、任务租约和调度锁闭合并发与恢复。
 - `storage-init`：无网络的一次性进程，准备 API/worker/app-init 与 Milvus 挂载根的属主和模式，不递归修改已有文件；消费进程等待其成功退出。
-- `app-init`：普通用户运行的部署任务，在 PostgreSQL advisory lock 内先建立或校验当前 Schema，再同步系统配置定义、内置供应商、Agent、MCP 与 Skill 来源文件。API 与 worker 等待全部成功。空库基线为 business 7、knowledge 2，包含个人文件打开记录。当前版本跳过建表，版本不匹配时初始化失败。存量库先按[部署指南](docs/advanced/deployment.md#_3-数据库与文件目录)离线迁移。共享同步失败保留已提交内容，修正后幂等重跑。
+- `app-init`：普通用户运行的部署任务，在 PostgreSQL advisory lock 内先建立或校验当前 Schema，再同步系统配置定义、内置供应商、Agent、MCP 与 Skill 来源文件。API 与 worker 等待全部成功。空库基线为 business 8、knowledge 2，包含会话状态投影列、个人 MCP 授权、个人空间打开记录和用量快照。当前版本跳过建表，版本不匹配时初始化失败。存量库先按[部署指南](docs/advanced/deployment.md#_3-数据库与文件目录)离线迁移。共享同步失败保留已提交内容，修正后幂等重跑。
 - Cube Linux/KVM 执行节点：每个用户拥有一个持久普通账号 VM，Workspace 与授权 Skills 共享宿主文件。
 - `sandbox-runner`：选择 container 后端时由该独立进程持有 Docker socket，为每个 Run 懒创建临时容器并执行命令；API/worker 只调用认证 HTTP。远程 Skill 的固定获取 CLI 使用只挂载本请求目录的一次性容器，由请求 finally 与独立 TTL 回收，不创建业务 Run。挂载、镜像和资源限制由 runner 拥有，Agent Run 归属与清理责任仍由 PostgreSQL 拥有。
 - `postgres`：业务数据、知识库元数据、持久 Input 队列、Turn/Run 与 LangGraph checkpoint。
@@ -51,7 +51,7 @@ Yuxi 默认交付完整知识能力。部署开关 `YUXI_KNOWLEDGE_ENABLED` 由�
 
 - `modules/agents` 拥有 Input 接收、优先队列调度、Turn/Run、消息、事件、运行租约与 LangGraph Agent runtime。`services/run_lifecycle.py` 拥有终态的 Thread→Turn→Input→Run 锁序、steer 裁决、Run/Turn 投影及提交后清理；checkpoint、runner 与 lease 恢复用例继续拥有各自事务提交。`services` 编排用例，`repositories` 查询持久状态，`models` 定义 ORM；`runtime/agent_backends` 拥有执行图实现与显式注册，`runtime/sandbox` 拥有沙盒执行与生命周期；`runtime/middlewares` 拥有模型与工具策略，Context 装配留在 runtime，知识库可见范围解析由 knowledge service 拥有。
 - `modules/knowledge` 拥有知识库、分块、检索、图谱与评估的业务状态；`services/uploads.py` 共用上传、URL 与工作区原件的哈希及独立 MinIO 暂存，路由校验权限并适配响应，`services/bases.py` 拥有库元数据生命周期，`access.py` 拥有可见性与权限筛选，`documents.py` 拥有本地文件读取/列表/搜索，`directories.py` 拥有目录用例；这些入口直接访问知识域 repository。manager 只负责执行器配置与装配、解析、索引、检索、外部阅读和外部资源清理。删除用例由 `services/administration.py` 直接编排能力校验与文件/目录删除，repository 和目录 service 在原事务内登记 tombstone 与清理 outbox。目录与导入 service 在同一 PostgreSQL 事务中发布真实目录、唯一名称、文件、幂等回执及作业，提交后投递；worker 处理已登记文件。`services/graph_build.py` 拥有图谱提交准入与 Job 登记，worker 独立消费 action，图谱执行器拥有配置及投影锁。`modules/documents` 解析配置与 MinIO 输入，并按调用方指定的位置发布资源；`infrastructure/document_parsing` 只生成完整本地 Markdown 目录，`parser.py` 拥有格式转换，`artifacts.py` 拥有产物路径与引用，`engines/` 集中 OCR 契约、注册与实现。
-- `modules/workspace` 拥有 UserWorkspace 的路径映射、no-follow 文件操作、Workdir 和预览；Agent 沙盒与 Viewer 共用的 runtime 虚拟路径映射由 `modules/workspace/runtime_paths.py` 拥有。
+- `modules/workspace` 拥有 UserWorkspace 的路径映射、no-follow 文件操作、Workdir 和预览；Agent 沙盒与 Viewer 共用的 runtime 虚拟路径映射由 `modules/workspace/runtime_paths.py` 拥有。Workspace 按 UID 合并宿主写入和沙盒启动、恢复的用量标记，worker 周期扫描有标记的目录，并将用量快照保存到 PostgreSQL。达到软配额时拒绝文件上传，调度器保留等待启动的用户输入。用量回落后按原序派发，执行中的任务可以继续。
 - `modules/identity` 拥有用户、部门、权限、凭据与 OIDC 账号用例，以及 Public API 的 Key 校验与 App/end_user 身份解析；`modules/extensions` 拥有 Skills、部署插件、MCP 与工具目录；`modules/models` 拥有模型适配和供应商配置。
 - `modules/schedules` 拥有用户定时 Agent 定义和 occurrence；`modules/background_jobs` 拥有任务登记、执行方上报的观察记录和取消意图；后台作业模块的 dispatch 与 registry 拥有提交和定义，`workers` 拥有领取、执行和失联维护；`modules/system` 拥有系统配置、Dashboard 与跨域共享资源所有权治理。
 
@@ -106,7 +106,7 @@ Yuxi 默认交付完整知识能力。部署开关 `YUXI_KNOWLEDGE_ENABLED` 由�
 7. 安全接管点在工具批次及 checkpoint 保存之后，或无工具的模型调用完成之后。pending steer 被固定为消费批次，旧 Run yielded，同一 Turn 创建下一 Run；提交后确认旧 Run 的 runtime 清理再投递接续，领取边界拒绝同 Thread 尚有清理责任的首次执行。普通工具循环保持同一 Run。人工等待使 Run interrupted、Turn waiting，并保存绑定该 Run 的等待点；结构化回答或审批消费等待点后，在同一 Turn 创建新 Run。
 8. 完成、失败和取消由当前 owner 在数据库事务中收敛 Run 与 Turn。最终结果指向明确的顶层 result Run 的 output Message；Model/Tool 审计保留独立归属；普通历史只读取已登记的公开 item，不包含内部 prompt 或 checkpoint。父完成、失败或单轮取消保留后代独立工作；用户显式停止整树才取消所有成员在途 Turn。取消先持久化状态并暂停待消费输入队列，再发送 Redis 加速信号；失联 Run 由 lease reconciliation 形成可观察失败。外部副作用仍按 at-least-once 语义核对。
 9. 工具真实开始与进度来自 BaseTool 回调，最外层 `ToolErrorGuardMiddleware` 按最终 ToolMessage 发布结局，原始与最终结果均成功时保留压缩前原文，`BaseAgent` 将其转为统一工具事件；中间件直接返回的结果不伪造 `started_at`。LangGraph v3 ProtocolEvent 由 `RunMessageRecorder` 统一记录模型和工具消息事实。工具审计仅在 `extra_metadata.output` 保存原始结果，`content` 固定为空且由数据库约束保护；审计文本、Memory 与公开内容使用同一工具结果契约派生，再由公开适配器转换为 OpenAI Agents 事件。消息事实与公开快照各自提交后发布事件，checkpoint 留在独立执行结果。Redis 保存逐条公开事件，SSE data 为事件本身，逻辑 event_id 与恢复 cursor 分开；断线或过期时客户端读取 PostgreSQL 快照恢复，不从相邻 Run 推断结果。
-10. Thread 保存不可变 `project_id`，每个 Project 绑定一个 `workdir_path`，多个 Project 可以共享同一路径。managed Project 使用服务端创建的 `projects/YYYYMMDD/<六位标识>[-N]`，linked Project 绑定当前用户 UserWorkspace 内通过 no-follow 校验的已有目录。Thread 只归档；删除 Project 时拒绝仍有活跃 Turn 或待处理 Input 的情况，再软删除 Project 并归档所属 Thread。`yuxi.modules.workspace` 拥有宿主路径和 fd-relative 文件访问，Workdir resolver 为 Viewer、附件、Artifact、Run 和协作会话提供同一持久路径；Run 终态解除当前执行的清理责任，用户 VM 在无活动 Run 或命令时空闲休眠，Workdir 保留。
+10. Thread 保存不可变 `project_id`，每个 Project 绑定一个 `workdir_path`，多个 Project 可以共享同一路径。managed Project 使用服务端创建的 `agents/tasks/YYYY-MM-DD/<前缀>-<六位标识>[-N]`，linked Project 绑定当前用户 UserWorkspace 内通过 no-follow 校验的已有目录。Thread 只归档；删除 Project 时拒绝仍有活跃 Turn 或待处理 Input 的情况，再软删除 Project 并归档所属 Thread。`yuxi.modules.workspace` 拥有宿主路径和 fd-relative 文件访问，Workdir resolver 为 Viewer、附件、Artifact、Run 和协作会话提供同一持久路径；Run 终态解除当前执行的清理责任，用户 VM 在无活动 Run 或命令时空闲休眠，Workdir 保留。
 
 ## 架构不变量
 

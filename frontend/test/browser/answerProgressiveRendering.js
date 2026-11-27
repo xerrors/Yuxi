@@ -26,7 +26,8 @@ async page => {
     else if (path === '/api/auth/me') json = { id: 1, uid: 'answer-fixture', username: '阅读验证', role: 'user' }
     else if (path === '/api/agent') json = { agents: [agent] }
     else if (path === '/api/agent/answer-test') json = agent
-    else if (path === '/api/projects' || path === '/api/mention/plugins') json = []
+    else if (path === '/api/projects') json = []
+    else if (path === '/api/mention/resources') json = {}
     else if (path.endsWith('/sessions')) json = { data: [thread], has_more: false }
     else if (path.endsWith('/answer-history') || path.endsWith('/viewed')) json = thread
     else if (path.endsWith('/items')) json = { data: [...items].reverse(), has_more: false, yuxi: { runs: [] } }

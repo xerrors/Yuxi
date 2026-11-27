@@ -11,6 +11,7 @@ const controlKey = () =>
 /** 将持久 Input 队列投影到当前 Thread，并跟踪领取结果。 */
 export function useAgentInputQueue({
   getThreadState,
+  isCurrentThreadState = (threadId, state) => getThreadState(threadId) === state,
   isThreadActive = () => true,
   onInputConsumed,
   onStreamError
@@ -140,7 +141,7 @@ export function useAgentInputQueue({
     if (threadId) await syncQueuedInputs(threadId)
   }
 
-  const changeInput = async (action, threadId, inputId) => {
+  const changeInput = async (action, threadId, inputId, onExecutionError) => {
     const ts = getThreadState(threadId)
     if (
       !ts ||
@@ -153,6 +154,7 @@ export function useAgentInputQueue({
     try {
       const command = action === 'promote' ? agentApi.promoteThreadInput : agentApi.cancelThreadInput
       await command(threadId, inputId, commandKeys.get(key))
+      if (!isCurrentThreadState(threadId, ts)) return false
       commandKeys.delete(key)
       advanceSnapshot(threadId)
       if (action === 'cancel') {
@@ -162,8 +164,10 @@ export function useAgentInputQueue({
           delete ts.optimisticInputs[inputId]
       }
       await syncQueuedInputs(threadId)
-      return true
+      return isCurrentThreadState(threadId, ts)
     } catch (error) {
+      if (!isCurrentThreadState(threadId, ts)) return false
+      onExecutionError?.(threadId, error)
       if (error?.status === 409) {
         commandKeys.delete(key)
         await syncQueuedInputs(threadId)
@@ -174,17 +178,20 @@ export function useAgentInputQueue({
   }
 
   const cancelInput = (threadId, inputId) => changeInput('cancel', threadId, inputId)
-  const promoteInput = (threadId, inputId) => changeInput('promote', threadId, inputId)
+  const promoteInput = (threadId, inputId, onExecutionError) => changeInput('promote', threadId, inputId, onExecutionError)
 
-  const continueQueue = async (threadId) => {
+  const continueQueue = async (threadId, onExecutionError) => {
     const ts = getThreadState(threadId)
     if (!ts || ts.continueQueueInFlight) return false
     ts.continueQueueInFlight = true
     try {
       await agentApi.continueThreadQueue(threadId, controlKey())
+      if (!isCurrentThreadState(threadId, ts)) return false
       await syncQueuedInputs(threadId)
-      return true
+      return isCurrentThreadState(threadId, ts)
     } catch (error) {
+      if (!isCurrentThreadState(threadId, ts)) return false
+      onExecutionError?.(threadId, error)
       handleChatError(error, 'continue_queue')
       return false
     } finally {

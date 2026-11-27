@@ -44,7 +44,7 @@ docker compose --profile container up --build -d
 
 In Windows PowerShell, use `.\scripts\init.ps1` in place of `./scripts/init.sh`.
 
-To try the [v0.8.1.beta1 prerelease](https://github.com/xerrors/Yuxi/releases/tag/v0.8.1.beta1), use `v0.8.1.beta1` as the clone tag. [Full installation guide](https://xerrors.github.io/Yuxi/intro/quick-start) · [Production deployment and isolation](docs/advanced/deployment.md)
+To try the [v0.8.1.beta2 prerelease](https://github.com/xerrors/Yuxi/releases/tag/v0.8.1.beta2), use `v0.8.1.beta2` as the clone tag. [Full installation guide](https://xerrors.github.io/Yuxi/intro/quick-start) · [Production deployment and isolation](docs/advanced/deployment.md)
 
 ## Feature Showcase
 

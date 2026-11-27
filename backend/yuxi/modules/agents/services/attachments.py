@@ -3,6 +3,7 @@ import hashlib
 import os
 import tempfile
 import uuid
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote, unquote
@@ -16,15 +17,19 @@ from yuxi.infrastructure.filesystem import await_io
 from yuxi.infrastructure.minio import StorageError, get_minio_client
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.models.attachments import AgentAttachment
+from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.repositories.attachments import AttachmentRepository
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.scope import ActorScope
 from yuxi.modules.agents.services.thread_access import require_thread
 from yuxi.modules.system.options import system_options
 from yuxi.modules.workspace.filesystem import Workspace
 from yuxi.modules.workspace.paths import ensure_user_workspace
+from yuxi.modules.workspace.runtime_files import RuntimeFiles
 from yuxi.modules.workspace.runtime_paths import runtime_path_for_workdir_scope, workdir_scope_from_runtime_path
+from yuxi.modules.workspace.services.quota import require_upload_capacity
 from yuxi.modules.workspace.workdir import Workdir
 from yuxi.shared.datetime import format_utc_datetime
 from yuxi.shared.errors import DomainError, InvalidInputError, InvalidOperationError, ResourceNotFoundError, StateConflictError
@@ -62,6 +67,7 @@ async def upload_draft_file(*, file_content: bytes, filename: str, content_type:
         raise InvalidOperationError("无法识别的文件名")
     if len(file_content) > MAX_ATTACHMENT_SIZE_BYTES:
         raise InvalidOperationError("附件过大，当前仅支持 5 MB 以内的文件")
+    await require_upload_capacity(db, scope.uid)
     owner = _tmp_attachment_owner(scope.uid, scope.app_id)
     file_id, object_name = _make_tmp_attachment_object(owner, filename)
     client = get_minio_client()
@@ -185,25 +191,24 @@ async def stage_input_attachments(*, db, scope: ActorScope, input_item, file_ids
     await db.flush()
 
 
-async def prepare_input_attachments(*, db, agent_session, input_item, binding) -> bool:
+async def prepare_input_attachments(*, db, input_item, binding) -> None:
     """唯一准备函数从绑定行写入正式目录，准备失败保留来源。"""
     attachments = await AttachmentRepository(db).list_for_input(input_item.id, lock=True)
     preparing = [attachment for attachment in attachments if attachment.status == "preparing"]
     if not preparing:
-        return True
-    from yuxi.modules.workspace.services.bindings import ensure_session_workdir_available
-
+        return
+    try:
+        workdir = binding.open_existing()
+    except StateConflictError as exc:
+        # 缺失目录可恢复。保留接收来源，并区分目录缺失与存储准备失败。
+        for attachment in preparing:
+            attachment.error = exc.message
+        await db.flush()
+        return
     try:
         async with db.begin_nested():
-            await ensure_session_workdir_available(agent_session=agent_session, uid=agent_session.uid, db=db, workdir_binding=binding)
-            workdir = Workdir.open_existing(agent_session.uid, binding.workdir_path)
             client = get_minio_client()
             for attachment in preparing:
-                directory = f"/uploads/attachments/{attachment.id}"
-                try:
-                    await asyncio.to_thread(workdir.delete, directory)
-                except FileNotFoundError:
-                    pass
                 content = await client.adownload_file(
                     client.KB_BUCKETS["documents"],
                     attachment.object_name,
@@ -211,9 +216,7 @@ async def prepare_input_attachments(*, db, agent_session, input_item, binding) -
                 )
                 if len(content) != attachment.size_bytes:
                     raise ValueError("附件来源字节数与上传记录不符")
-                parsed_source = (
-                    Workdir(str(Path(attachment.parsed_source).parent), Workspace(agent_session.uid)) if attachment.parsed_source else None
-                )
+                parsed_source = Workdir(str(Path(attachment.parsed_source).parent), workdir.workspace) if attachment.parsed_source else None
                 record = await _store_attachment(
                     workdir=workdir,
                     file_id=attachment.id,
@@ -225,24 +228,84 @@ async def prepare_input_attachments(*, db, agent_session, input_item, binding) -
                 attachment.original_path = record["original_path"]
                 attachment.status = "ready"
                 attachment.error = None
+            # 发布后仍可能被个人空间删除，已就绪状态与临时来源清理必须等待文件确认。
+            await asyncio.to_thread(
+                require_attachment_files, binding.uid, (path for item in preparing for path in (item.path, item.original_path))
+            )
             await db.flush()
-    except Exception:
+    except Exception as exc:
+        error = exc.message if isinstance(exc, StateConflictError) else "附件准备失败，等待恢复重试"
         for attachment in preparing:
             await db.refresh(attachment)
-            attachment.error = "附件准备失败，等待恢复重试"
+            attachment.error = error
         await db.flush()
         logger.exception("附件准备失败，保留 Input 等待重试: {}", input_item.id)
-        return False
-    return True
+
+
+def require_attachment_files(uid: str, paths: Iterable[str]) -> None:
+    """确认待使用的附件原件或解析主文件仍是可读的已授权普通文件。"""
+    files = RuntimeFiles(uid)
+    for path in dict.fromkeys(paths):
+        try:
+            files.require_readable_file(path)
+        except (FileNotFoundError, NotADirectoryError, IsADirectoryError, PermissionError, ValueError) as exc:
+            raise StateConflictError("本次输入的附件文件已不存在或不可访问", code="attachment_file_unavailable") from exc
+
+
+async def readable_ready_prefix(*, db, batch: list[AgentInput]) -> list[AgentInput]:
+    """领取只看候选输入的正式文件，临时来源的探测与恢复留给调度。"""
+    if not batch:
+        return batch
+    prepared = await AttachmentRepository(db).prepared_files_for_inputs([item.id for item in batch])
+    for index, item in enumerate(batch):
+        files = prepared.get(item.id, [])
+        if files:
+            paths = (path for attachment in files for path in (attachment.path, attachment.original_path))
+            try:
+                await asyncio.to_thread(require_attachment_files, item.uid, paths)
+            except StateConflictError:
+                return batch[:index]
+    return batch
+
+
+async def _retain_missing_attachment_source(attachment: AgentAttachment) -> bool:
+    """正式文件丢失且来源仍可用时，交回附件准备流程。"""
+    try:
+        await asyncio.to_thread(require_attachment_files, attachment.uid, (attachment.path, attachment.original_path))
+    except StateConflictError as exc:
+        client = get_minio_client()
+        try:
+            source_size = await client.astat_file(client.KB_BUCKETS["documents"], attachment.object_name)
+        except Exception:
+            logger.exception("附件临时来源暂时无法核验: {}", attachment.id)
+            return True
+        if source_size != attachment.size_bytes:
+            # 上一次清理可能已删除对象，只剩未提交清除的临时引用。
+            return False
+        if attachment.parsed_source:
+            source = Workdir(str(Path(attachment.parsed_source).parent), Workspace(attachment.uid))
+            try:
+                await asyncio.to_thread(_read_parsed_attachment, source)
+            except (FileNotFoundError, NotADirectoryError, IsADirectoryError, PermissionError, ValueError):
+                return False
+        attachment.status = "preparing"
+        attachment.path = attachment.original_path = None
+        attachment.error = exc.message
+        return True
+    return False
 
 
 async def cleanup_prepared_sources(*, db, thread_id: str) -> None:
-    """就绪事务提交后清理临时内容，失败保留位置供现有恢复循环重试。"""
+    """在 Thread 锁下清理来源，可恢复的未消费附件仍保留来源。"""
+    if await SessionRepository(db).lock_session_by_thread_id(thread_id) is None:
+        return
     attachments = await AttachmentRepository(db).prepared_sources(thread_id)
     if not attachments:
         return
     client = get_minio_client()
-    for attachment in attachments:
+    for attachment, input_status in attachments:
+        if input_status != "consumed" and await _retain_missing_attachment_source(attachment):
+            continue
         try:
             await _delete_draft_storage(client, attachment)
         except (StorageError, OSError):
@@ -282,7 +345,7 @@ async def delete_thread_attachment_view(
     )
     if input_item is None:
         raise ResourceNotFoundError("附件不存在或已被删除")
-    if input_item.status == "pending" or attachment.status != "ready":
+    if input_item.status == "pending":
         raise StateConflictError("附件正在被输入使用，暂时不能删除")
     if await AgentRunRepository(db).get_active_run_by_thread_for_user(
         agent_slug=agent_session.agent_id,
@@ -290,6 +353,14 @@ async def delete_thread_attachment_view(
         uid=str(current_uid),
     ):
         raise StateConflictError("对话正在运行，暂时不能删除附件")
+    if input_item.status == "cancelled" and attachment.status == "preparing":
+        # 已取消的准备记录没有消费者，可直接清除临时来源和关系。
+        await _delete_draft_storage(get_minio_client(), attachment)
+        await db.delete(attachment)
+        await db.commit()
+        return {"message": "附件已删除"}
+    if attachment.status != "ready":
+        raise StateConflictError("附件正在准备，暂时不能删除")
     from yuxi.modules.workspace.services.bindings import resolve_authorized_session_workdir
 
     binding = await resolve_authorized_session_workdir(agent_session=agent_session, uid=str(current_uid), db=db, app_id=app_id)
@@ -437,6 +508,14 @@ async def _write_workdir_file(workdir, path: str, content: bytes) -> None:
                 pass
 
 
+def _read_parsed_attachment(source: Workdir) -> None:
+    """验证解析主文档及其引用的本地资源属于同一来源。"""
+    markdown = source.read_file("/document.md", 100 * 1024 * 1024)
+    for link in local_image_links(markdown.decode("utf-8")):
+        relative = resource_path(unquote(link))
+        source.read_file(f"/{relative}", 100 * 1024 * 1024)
+
+
 async def _store_attachment(
     *,
     workdir,
@@ -452,6 +531,12 @@ async def _store_attachment(
     directory_scope = f"/uploads/attachments/{file_id}"
     markdown_scope = f"{directory_scope}/document.md"
     markdown_path = runtime_path_for_workdir_scope(workdir.relative_path, markdown_scope)
+    if parsed_source is not None:
+        await asyncio.to_thread(_read_parsed_attachment, parsed_source)
+        try:
+            await asyncio.to_thread(workdir.delete, directory_scope)
+        except FileNotFoundError:
+            pass
     try:
         await _write_workdir_file(workdir, original_scope, file_content)
         original_path = runtime_path_for_workdir_scope(workdir.relative_path, original_scope)
@@ -460,10 +545,6 @@ async def _store_attachment(
             return record
 
         # 客户端只能选择入口；每个文件仍在源与目标 owning filesystem boundary 校验。
-        markdown = await asyncio.to_thread(parsed_source.read_file, "/document.md", 100 * 1024 * 1024)
-        for link in local_image_links(markdown.decode("utf-8")):
-            relative = resource_path(unquote(link))
-            await asyncio.to_thread(parsed_source.read_file, f"/{relative}", 100 * 1024 * 1024)
         await await_io(asyncio.to_thread(workdir.copy_directory_from, parsed_source, directory_scope, max_file_bytes=100 * 1024 * 1024))
     except BaseException:
         try:

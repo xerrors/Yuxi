@@ -19,84 +19,79 @@
       >
         {{ earlierMessagesLabel }}
       </button>
-      <template v-for="row in messageGroupRows" :key="row.key">
-        <div v-if="row.type === 'message-group'" class="group-box">
-          <div v-if="row.timeLabel" class="message-group-time">
-            {{ row.timeLabel }}
-          </div>
-          <div
-            v-for="(displayItem, itemIndex) in row.displayItems"
-            :key="displayItem.key"
-            class="history-display-item"
-            :data-history-key="displayItem.key"
-          >
-            <AgentMessageComponent
-              v-if="displayItem.type === 'message'"
-              :message="displayItem.message"
-              :thread-id="threadId"
-              :is-processing="isDisplayMessageProcessing(row.group, displayItem)"
-              :show-refs="showMsgRefs(displayItem.message, row.group)"
-              :hide-tool-calls="true"
-              :mention="mentionConfig"
-              :widget-action="widgetAction"
-              :widgets-disabled="row.group.status === 'streaming' || widgetActionsDisabled"
-              @open-refs="emit('open-refs', $event)"
-              @open-session="emit('open-session', $event)"
-            >
-            </AgentMessageComponent>
-            <ToolCallsGroupComponent
-              v-else-if="displayItem.type === 'tool-group'"
-              :tool-calls="displayItem.toolCalls"
-              :entries="displayItem.entries"
-              :cooperation-view="cooperationView"
-              :is-active="isToolGroupActive(row.group, itemIndex, row.displayItems)"
-            />
-            <RunProcessGroupComponent
-              v-else
-              :items="displayItem.items"
-              :cooperation-view="cooperationView"
-              :message-count="displayItem.messageCount"
-              :tool-call-count="displayItem.toolCallCount"
-              :duration-ms="displayItem.durationMs"
-              :widgets-disabled="row.group.status === 'streaming' || widgetActionsDisabled"
-              :mention="mentionConfig"
-              :widget-action="widgetAction"
-            />
-          </div>
-          <RunFailureNotice
-            v-if="row.group.run?.status === 'failed'"
-            :error-message="row.group.run.error_message"
-          />
-          <div
-            v-else-if="row.runNotice"
-            class="chat-inline-notice"
-            :class="{ 'is-terminal': row.runNotice.stopped }"
-          >
-            {{ row.runNotice.message }}
-          </div>
-          <AgentArtifactsCard
-            v-if="row.artifacts.length && shouldShowRefs(row.group)"
-            :artifacts="row.artifacts"
+      <div v-for="row in messageGroupRows" :key="row.key" class="group-box">
+        <div v-if="row.timeLabel" class="message-group-time">
+          {{ row.timeLabel }}
+        </div>
+        <div
+          v-for="(displayItem, itemIndex) in row.displayItems"
+          :key="displayItem.key"
+          class="history-display-item"
+          :data-history-key="displayItem.key"
+        >
+          <AgentMessageComponent
+            v-if="displayItem.type === 'message'"
+            :message="displayItem.message"
             :thread-id="threadId"
-            @saved="emit('artifact-saved', $event)"
-            @open-preview="emit('open-preview', $event)"
-          />
-          <!-- 显示对话最后一个消息使用的模型 -->
-          <RefsComponent
-            v-if="shouldShowRefs(row.group)"
-            :thread-id="threadId"
-            :message="getLastMessage(row.group)"
-            :run="getMessageRun(getLastMessage(row.group))"
-            :show-refs="['model', 'copy', 'sources']"
-            :is-latest-message="false"
-            :sources="getMessageGroupSources(row.group)"
+            :is-processing="isDisplayMessageProcessing(row.group, displayItem)"
+            :show-refs="showMsgRefs(displayItem.message, row.group)"
+            :hide-tool-calls="true"
+            :mention="mentionConfig"
+            :widget-action="widgetAction"
+            :widgets-disabled="row.group.status === 'streaming' || widgetActionsDisabled"
             @open-refs="emit('open-refs', $event)"
+            @open-session="emit('open-session', $event)"
+          >
+          </AgentMessageComponent>
+          <ToolCallsGroupComponent
+            v-else-if="displayItem.type === 'tool-group'"
+            :tool-calls="displayItem.toolCalls"
+            :entries="displayItem.entries"
+            :cooperation-view="cooperationView"
+            :is-active="isToolGroupActive(row.group, itemIndex, row.displayItems)"
+          />
+          <RunProcessGroupComponent
+            v-else
+            :items="displayItem.items"
+            :cooperation-view="cooperationView"
+            :message-count="displayItem.messageCount"
+            :tool-call-count="displayItem.toolCallCount"
+            :duration-ms="displayItem.durationMs"
+            :widgets-disabled="row.group.status === 'streaming' || widgetActionsDisabled"
+            :mention="mentionConfig"
+            :widget-action="widgetAction"
           />
         </div>
-        <div v-else class="chat-inline-notice">
-          <span>{{ row.notice.message }}</span>
+        <RunFailureNotice
+          v-if="row.group.run?.status === 'failed'"
+          :error-message="row.group.run.error_message"
+        />
+        <div
+          v-else-if="row.runNotice"
+          class="chat-inline-notice"
+          :class="{ 'is-terminal': row.runNotice.stopped }"
+        >
+          {{ row.runNotice.message }}
         </div>
-      </template>
+        <AgentArtifactsCard
+          v-if="row.artifacts.length && shouldShowRefs(row.group)"
+          :artifacts="row.artifacts"
+          :thread-id="threadId"
+          @saved="emit('artifact-saved', $event)"
+          @open-preview="emit('open-preview', $event)"
+        />
+        <!-- 显示对话最后一个消息使用的模型 -->
+        <RefsComponent
+          v-if="shouldShowRefs(row.group)"
+          :thread-id="threadId"
+          :message="getLastMessage(row.group)"
+          :run="getMessageRun(getLastMessage(row.group))"
+          :show-refs="['model', 'copy', 'sources']"
+          :is-latest-message="false"
+          :sources="getMessageGroupSources(row.group)"
+          @open-refs="emit('open-refs', $event)"
+        />
+      </div>
 
       <div v-if="state?.readingError" class="thread-reading-error" role="alert">
         <span>对话读取失败，请重试。</span>
@@ -154,8 +149,6 @@ const props = defineProps({
   processing: { type: Boolean, default: false },
   replyLoading: { type: Boolean, default: false },
   suppressRefs: { type: Boolean, default: false },
-  configNotice: { type: Object, default: null },
-  configNoticeScrollVersion: { type: Number, default: 0 },
   mentionConfig: { type: Object, default: null },
   cooperationView: { type: Object, default: null },
   knowledgeBases: { type: Array, default: () => [] },
@@ -173,7 +166,6 @@ const workspaceActive = computed(() => props.active && activated.value && user.i
 const pageVisible = computed(() => props.pageVisible && documentVisible.value)
 const isLoadingMessages = computed(() => props.loading || Boolean(state.value?.readingLoading && !state.value?.historyLoaded))
 const isProcessing = computed(() => props.processing || Boolean(state.value?.isStreaming))
-const currentThreadConfigNotice = toRef(props, 'configNotice')
 const availableKnowledgeBases = toRef(props, 'knowledgeBases')
 provide('getAgentThreadState', runtime.getThreadState)
 const { historyPages } = storeToRefs(runtime)
@@ -217,15 +209,14 @@ const getMessageGroupTimeLabel = (group, previousGroup) => {
   return displayTime.format(displayTime.isSame(today, 'year') ? 'MM-DD HH:mm' : 'YYYY-MM-DD HH:mm')
 }
 
-const messageGroupRows = computed(() => {
-  const rows = runGroups.value.map((group, index) => {
+const messageGroupRows = computed(() =>
+  runGroups.value.map((group, index) => {
     const displayItems = getDisplayItems(group)
     const { run } = group
     const turn = isCooperationWaitRun(run)
       ? state.value?.settledCooperationTurns.get(run.turn_id) ?? state.value?.detail?.yuxi.current_turn
       : null
     return {
-      type: 'message-group',
       key:
         group.displayKey ||
         group.run?.id ||
@@ -237,21 +228,7 @@ const messageGroupRows = computed(() => {
       artifacts: MessageProcessor.extractArtifactsFromMessageGroup(group)
     }
   })
-
-  if (currentThreadConfigNotice.value) {
-    const insertAfterCount = Math.max(
-      0,
-      Math.min(Number(currentThreadConfigNotice.value.insertAfterGroupCount) || 0, rows.length)
-    )
-    rows.splice(insertAfterCount, 0, {
-      type: 'notice',
-      key: currentThreadConfigNotice.value.id,
-      notice: currentThreadConfigNotice.value
-    })
-  }
-
-  return rows
-})
+)
 
 const getMessageToolCalls = (message) => normalizeToolCalls(message?.tool_calls)
 
@@ -495,13 +472,6 @@ watch(
   runGroups,
   () => {
     if (workspaceActive.value && pageVisible.value && isProcessing.value) scrollController.scrollToBottom()
-  },
-  { flush: 'post' }
-)
-watch(
-  () => props.configNoticeScrollVersion,
-  () => {
-    if (workspaceActive.value && props.threadId) scrollController.scrollToBottom(true)
   },
   { flush: 'post' }
 )

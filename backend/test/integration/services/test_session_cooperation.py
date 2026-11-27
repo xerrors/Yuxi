@@ -33,6 +33,7 @@ from yuxi.modules.agents.services.cooperation import SessionCooperationService, 
 from yuxi.modules.agents.services.scheduler import deliver
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.models import Project
+from yuxi.modules.workspace.paths import user_workspace_dir
 from yuxi.shared.datetime import utc_now
 from yuxi.shared.errors import DomainError, StateConflictError
 
@@ -40,8 +41,9 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_man
 
 
 @pytest_asyncio.fixture()
-async def tree(monkeypatch):
+async def tree(monkeypatch, tmp_path):
     """每个用例建立独立用户和树，沙盒清理为替身，输出与范围从数据库回读。"""
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path))
     load_models()
     engine = create_async_engine(os.environ["POSTGRES_URL"])
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -102,6 +104,8 @@ async def tree(monkeypatch):
         _, acquired = await AgentRunRepository(db).mark_running(run_id, worker_id="root-worker", lease_seconds=120)
         assert acquired
         uid = root.uid
+        project = await db.get(Project, root.project_id)
+        (user_workspace_dir(uid) / project.workdir_path).mkdir(parents=True)
     try:
         yield factory, run_id, thread_id, uid
     finally:
@@ -702,7 +706,6 @@ async def test_dispatch_failure_after_persisted_accept_keeps_stable_receipt(tree
         raise ConnectionError("dispatch backend unavailable")
 
     monkeypatch.setattr("yuxi.modules.agents.services.scheduler.deliver", deliver)
-    monkeypatch.setattr("yuxi.modules.agents.services.scheduler.ensure_bound_user_workdir", lambda *_args: None)
     monkeypatch.setattr("yuxi.modules.agents.services.transport.enqueue_agent_run", broken_enqueue)
     async with factory() as db:
         service = SessionCooperationService(db, run_id=run_id, uid=uid, worker_id="root-worker")
@@ -748,7 +751,8 @@ async def test_accept_does_not_hide_dispatch_claim_failure(tree, monkeypatch):
         assert await db.scalar(select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == member["session_id"])) == 2
 
 
-async def test_cooperation_wait_releases_slot_and_recovers_same_turn(tree):
+@pytest.mark.parametrize("delete_workdir", [False, True], ids=["available", "restored"])
+async def test_cooperation_wait_releases_slot_and_recovers_same_turn(tree, delete_workdir):
     factory, run_id, root_id, uid = tree
     member = await child(tree)
     async with factory() as db:
@@ -772,6 +776,18 @@ async def test_cooperation_wait_releases_slot_and_recovers_same_turn(tree):
         recipient = await db.scalar(select(Session).where(Session.thread_id == root_id))
         await CooperationRepository(db).append(sender=sender, recipient=recipient, key="wake", kind="message", content="ready")
         await db.commit()
+    if delete_workdir:
+        async with factory() as db:
+            project = await db.get(Project, recipient.project_id)
+        workdir = user_workspace_dir(uid) / project.workdir_path
+        workdir.rmdir()
+        await recover_cooperation_waits()
+        async with factory() as db:
+            old = await db.get(AgentRun, run_id)
+            turn = await db.get(AgentTurn, old.turn_id)
+            assert turn.status == "waiting" and turn.current_run_id == old.id
+            assert turn.waitpoint["id"] == "wait-root"
+        workdir.mkdir()
     await recover_cooperation_waits()
     await recover_cooperation_waits()
     async with factory() as db:
@@ -1274,7 +1290,6 @@ async def test_tree_stop_cancels_released_retry_without_lease_failure(tree, monk
     """合法释放的重试 Run 应按取消收敛，并且继续队列不能复活它。"""
     from yuxi.modules.agents.services.cooperation import control_tree
     from yuxi.modules.agents.services.leases import reconcile_pending_runtime_cleanups
-    from yuxi.modules.agents.services.scheduler import Dispatch
 
     monkeypatch.setattr("yuxi.modules.agents.services.turns.publish_cancel_signals", AsyncMock())
     delivery = AsyncMock()
@@ -1320,8 +1335,7 @@ async def test_tree_stop_cancels_released_retry_without_lease_failure(tree, monk
         await db.refresh(following)
         next_run = await db.get(AgentRun, following.consumed_run_id)
         assert next_run is not None and next_run.turn_id != old_turn_id
-        delivery.assert_awaited_once()
-        assert isinstance(delivery.await_args.args[0], Dispatch)
+        delivery.assert_awaited_once_with(next_run.id)
 
 
 @pytest.mark.parametrize("operation", ["message", "input", "cancel"])
@@ -1480,6 +1494,51 @@ async def complete_member(factory, member, content):
         await db.commit()
 
 
+async def test_over_quota_cooperation_dispatch_respects_user_fifo_head(tree, monkeypatch):
+    """运行中的协作任务可发起成员工作，但不能越过暂缓的用户队头。"""
+    from yuxi.modules.agents.input_messages import build_chat_input_message
+    from yuxi.modules.agents.services import inputs, scheduler, threads
+    from yuxi.modules.workspace.repositories.usage import save_usage
+
+    factory, root_run_id, _, uid = tree
+    member = await child(tree)
+    await complete_member(factory, member, "DONE")
+    thread_id = member["session_id"]
+    scope = ActorScope(uid=uid, app_id=None)
+    limit = 65536
+    monkeypatch.setenv("WORKSPACE_QUOTA_BYTES", str(limit))
+    async with factory.begin() as db:
+        await save_usage(db, uid, limit, utc_now())
+
+    async with factory() as db:
+        user_input = await inputs.accept_message(
+            db=db,
+            scope=scope,
+            thread_id=thread_id,
+            idempotency_key="quota-user-head",
+            mode="follow_up",
+            messages=[build_chat_input_message("用户消息")],
+        )
+        cooperation = await SessionCooperationService(db, run_id=root_run_id, uid=uid, worker_id="root-worker").submit_input(
+            target=thread_id, description="协作消息", call_id="quota-cooperation"
+        )
+    async with factory() as db:
+        user_item = await db.get(AgentInput, user_input["input_id"])
+        cooperation_item = await db.get(AgentInput, cooperation["input_id"])
+        assert (user_item.status, user_item.turn_id) == ("pending", None)
+        assert (cooperation_item.status, cooperation_item.turn_id) == ("pending", None)
+        target = await SessionRepository(db).get_session_by_thread_id(thread_id)
+        agent_slug = target.agent_id
+        await threads.cancel_input(db=db, scope=scope, thread_id=thread_id, input_id=user_item.id, idempotency_key="cancel-quota-user-head")
+
+    await scheduler.dispatch_next_input(uid=uid, agent_slug=agent_slug, thread_id=thread_id)
+    async with factory() as db:
+        item = await db.get(AgentInput, cooperation["input_id"])
+        assert item.status == "consumed" and item.turn_id and item.consumed_run_id
+        run = await db.get(AgentRun, item.consumed_run_id)
+        assert (run.turn_id, run.thread_id, run.status) == (item.turn_id, thread_id, "pending")
+
+
 async def test_exact_result_survives_next_turn_and_queued_input_keeps_identity(tree):
     """A 完成且 B 已派发时，按 A 身份仍能读取 A 的输出。"""
     from yuxi.modules.agents.services.scheduler import claim_next_input
@@ -1494,9 +1553,9 @@ async def test_exact_result_survives_next_turn_and_queued_input_keeps_identity(t
     await complete_member(factory, member, "EXACT_A")
     async with factory() as db:
         session = await SessionRepository(db).lock_session_by_thread_id(member["session_id"])
-        dispatch = await claim_next_input(db=db, agent_session=session)
+        claimed_run_id = await claim_next_input(db=db, agent_session=session)
         await db.commit()
-        assert dispatch is not None
+        assert claimed_run_id is not None
     async with factory() as db:
         service = SessionCooperationService(db, run_id=run_id, uid=uid, worker_id="root-worker")
         queries = []

@@ -6,11 +6,11 @@ from unittest.mock import AsyncMock
 import pytest
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
 
-from yuxi.modules.agents.runtime import context as agent_context
-from test.unit.support.agent_context_fixtures import prepared_execution
-import yuxi.modules.agents.services.run_lifecycle as lifecycle
-import yuxi.modules.agents.services.execution as svc
 import yuxi.modules.agents.services.checkpoint_messages as message_svc
+import yuxi.modules.agents.services.execution as svc
+import yuxi.modules.agents.services.run_lifecycle as lifecycle
+from test.unit.support.agent_context_fixtures import prepared_execution
+from yuxi.modules.agents.runtime import context as agent_context
 
 
 def test_approval_binding_uses_current_model_and_keeps_duplicate_call_order():
@@ -87,7 +87,6 @@ def owning_turn_boundary(monkeypatch):
     monkeypatch.setattr(message_svc, "MessageRepository", lambda db: db.message_repository)
     monkeypatch.setattr(lifecycle, "AgentTurnRepository", TurnRepo)
     monkeypatch.setattr(lifecycle, "AgentInputRepository", InputRepo)
-    monkeypatch.setattr(lifecycle, "AttachmentRepository", lambda db: SimpleNamespace(has_unready=AsyncMock(return_value=False)))
 
     async def settle(**kwargs):
         repo = message_svc.AgentRunRepository(kwargs["db"])
@@ -99,7 +98,7 @@ def owning_turn_boundary(monkeypatch):
             error_type=kwargs.get("error_type"),
             error_message=kwargs.get("error_message"),
         )
-        return SimpleNamespace(status=kwargs["status"], changed=changed, next_dispatch=None)
+        return SimpleNamespace(status=kwargs["status"], changed=changed, next_run_id=None)
 
     monkeypatch.setattr(message_svc, "settle_checkpoint", settle)
 
@@ -336,18 +335,31 @@ async def test_steer_before_first_model_yields_without_ai_output(monkeypatch):
             pass
 
         async def get_pending_steer(self, **kwargs):
-            return SimpleNamespace(id="S3")
+            return SimpleNamespace(id="S3", kind="steer")
+
+        async def ready_batch(self, **kwargs):
+            return [await self.get_pending_steer(**kwargs)]
+
+    async def readable_ready_prefix(*, db, batch):
+        """固定本用例的已就绪批次，真实文件由集成用例覆盖。"""
+        return batch
+
+    async def workdir_available(**_kwargs):
+        """真实目录准入由 PostgreSQL 和文件系统集成用例覆盖。"""
+        return True
 
     async def settle(**kwargs):
         """模拟已由 PG 专项验证的同事务接管结果。"""
         run.status = "yielded"
-        return SimpleNamespace(status="yielded", changed=True, next_dispatch=SimpleNamespace(run_id="next-run"))
+        return SimpleNamespace(status="yielded", changed=True, next_run_id="next-run")
 
-    async def dispatch(target):
-        assert target.run_id == "next-run" and events == ["commit", "cleanup"]
+    async def dispatch(run_id):
+        assert run_id == "next-run" and events == ["commit", "cleanup"]
         events.append("dispatch")
 
     monkeypatch.setattr(message_svc, "AgentRunRepository", RunRepo)
+    monkeypatch.setattr(lifecycle, "session_workdir_is_available", workdir_available)
+    monkeypatch.setattr(lifecycle, "readable_ready_prefix", readable_ready_prefix)
     monkeypatch.setattr(lifecycle, "AgentInputRepository", InputRepo)
     monkeypatch.setattr(message_svc, "ModelMessageAuditRepository", _EmptyModelAuditRepo)
     monkeypatch.setattr(message_svc, "ToolMessageAuditRepository", _EmptyToolAuditRepo)

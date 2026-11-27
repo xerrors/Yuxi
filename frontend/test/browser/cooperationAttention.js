@@ -109,7 +109,8 @@ async (page) => {
   await page.getByRole('button', { name: '关闭 资料整理', exact: true }).click()
   const lateHistory = page.waitForResponse(response => response.url().includes('/sessions/attention-child/items'))
   await pill.click()
-  await page.getByRole('tab', { name: '文件', exact: true }).click()
+  await page.getByRole('tab', { name: '开始', exact: true }).click()
+  await page.getByRole('button', { name: '工作区文件', exact: true }).click()
   await lateHistory
   await page.waitForFunction(async () => {
     const { useSessionRuntimeStore } = await import('/src/modules/session/model/sessionRuntime.js')

@@ -5,7 +5,7 @@ import { resumeSessionWaitpoint } from './sessionCommands'
 import { hasPendingInterruptPayload } from './toolApproval'
 
 /** 从当前 Thread 的持久等待点派生界面，并按该等待点提交人工操作。 */
-export function useThreadTurnAction({ threadId, enabled, runtime }) {
+export function useThreadTurnAction({ threadId, enabled, runtime, onExecutionError }) {
   const state = computed(() => runtime.peekThreadState(threadId.value))
   const feedback = shallowRef(null)
   const action = computed(() => {
@@ -92,6 +92,7 @@ export function useThreadTurnAction({ threadId, enabled, runtime }) {
       }
       return true
     } catch (error) {
+      if (operation === 'submit' && sameWaitpoint()) onExecutionError?.(id, error)
       if (stillVisible()) {
         feedback.value = {
           state: current,

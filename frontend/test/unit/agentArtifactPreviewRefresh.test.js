@@ -1,17 +1,25 @@
 import assert from 'node:assert/strict'
 import test, { before, after } from 'node:test'
+import { setImmediate } from 'node:timers/promises'
 import { createRenderer, effectScope, h, KeepAlive, nextTick, reactive, ref, ssrContextKey } from 'vue'
 import { createPinia, disposePinia, setActivePinia } from 'pinia'
 import { createTestServer } from '../helpers/createTestServer.js'
 
 const artifactPath = '/home/user/workspace/projects/demo/方案.html'
 const artifactPreview = { path: artifactPath, name: '方案.html', workdir: false, key: `thread-a:${artifactPath}`, threadId: 'thread-a' }
-let server, component, threadApi, workspaceApi
+let server, component, threadApi, workspaceApi, viewerApi
 const oldWindow = globalThis.window, oldDocument = globalThis.document, oldStorage = globalThis.localStorage
 before(async () => {
   globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }
-  workspaceApi = {}
+  workspaceApi = {
+    getWorkspaceTree: async () => ({ entries: [] }),
+    getWorkspaceFileContent: undefined,
+    openWorkspaceFile: undefined,
+    searchWorkspaceFiles: undefined
+  }
+  viewerApi = { getViewerFileSystemTree: async () => ({ entries: [] }), searchViewerFiles: undefined }
   globalThis.__artifactWorkspaceApi = workspaceApi
+  globalThis.__artifactViewerApi = viewerApi
   server = await createTestServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom',
     plugins: [{ name: 'artifact-workspace-api', enforce: 'pre', load(id) {
       if (id.endsWith('/src/apis/workspace_api.js')) return `
@@ -19,7 +27,13 @@ before(async () => {
         export const getWorkspaceFileContent = (...args) => globalThis.__artifactWorkspaceApi.getWorkspaceFileContent(...args)
         export const openWorkspaceFile = (...args) => globalThis.__artifactWorkspaceApi.openWorkspaceFile(...args)
         export const downloadWorkspaceFile = () => {}
-        export const searchWorkspaceFiles = () => {}`
+        export const searchWorkspaceFiles = (...args) => globalThis.__artifactWorkspaceApi.searchWorkspaceFiles(...args)`
+      if (id.endsWith('/src/apis/viewer_filesystem.js')) return `
+        export const deleteViewerFile = () => {}
+        export const downloadViewerFile = () => {}
+        export const getViewerFileContent = () => {}
+        export const getViewerFileSystemTree = (...args) => globalThis.__artifactViewerApi.getViewerFileSystemTree(...args)
+        export const searchViewerFiles = (...args) => globalThis.__artifactViewerApi.searchViewerFiles(...args)`
     } }]
   })
   ;({ threadApi } = await server.ssrLoadModule('/src/apis/agent_api.js'))
@@ -30,6 +44,7 @@ before(async () => {
 after(async () => {
   await server?.close()
   delete globalThis.__artifactWorkspaceApi
+  delete globalThis.__artifactViewerApi
   if (oldWindow === undefined) delete globalThis.window; else globalThis.window = oldWindow
   if (oldDocument === undefined) delete globalThis.document; else globalThis.document = oldDocument
   if (oldStorage === undefined) delete globalThis.localStorage; else globalThis.localStorage = oldStorage
@@ -59,8 +74,8 @@ async function setupPanel(t, onEmit = () => {}) {
   })
   const oldPreview = threadApi.previewThreadArtifact
   const oldUrl = threadApi.getThreadArtifactUrl
-  const oldTree = workspaceApi.getWorkspaceTree
-  const oldContent = workspaceApi.getWorkspaceFileContent
+  const oldWorkspaceApi = { ...workspaceApi }
+  const oldViewerApi = { ...viewerApi }
   threadApi.getThreadArtifactUrl = () => '/artifact'
   threadApi.previewThreadArtifact = async (threadId, path) => {
     requests.push({ threadId, path })
@@ -97,8 +112,8 @@ async function setupPanel(t, onEmit = () => {}) {
     app.unmount()
     threadApi.previewThreadArtifact = oldPreview
     threadApi.getThreadArtifactUrl = oldUrl
-    workspaceApi.getWorkspaceTree = oldTree
-    workspaceApi.getWorkspaceFileContent = oldContent
+    Object.assign(workspaceApi, oldWorkspaceApi)
+    Object.assign(viewerApi, oldViewerApi)
   })
   await settle()
   return {
@@ -116,6 +131,63 @@ async function setupPanel(t, onEmit = () => {}) {
     }
   }
 }
+
+test('两个文件区域分别加载、搜索和刷新，只有项目请求携带当前线程', async (t) => {
+  const panel = await setupPanel(t)
+  const projectRequests = []
+  const workspaceRequests = []
+  const folderResponse = (name) => ({ entries: [{ path: `/${name}.md`, is_dir: false }] })
+  let projectName = 'project-report'
+  let workspaceName = 'personal-report'
+  viewerApi.getViewerFileSystemTree = async (threadId, path) => {
+    projectRequests.push(['tree', threadId, path])
+    return folderResponse(projectName)
+  }
+  workspaceApi.getWorkspaceTree = async (path) => {
+    workspaceRequests.push(['tree', path])
+    return folderResponse(workspaceName)
+  }
+  viewerApi.searchViewerFiles = async (threadId, query) => {
+    projectRequests.push(['search', threadId, query])
+    return folderResponse('project-match')
+  }
+  workspaceApi.searchWorkspaceFiles = async (query) => {
+    workspaceRequests.push(['search', query])
+    return folderResponse('personal-match')
+  }
+
+  panel.props.sections.push({ key: 'file-tree', type: 'file-tree', title: '工作区文件' })
+  panel.props.activeSectionKey = 'file-tree'
+  panel.props.activePreview = null
+  panel.props.filesystemVisible = true
+  await setImmediate()
+  assert.deepEqual(panel.view.fileTreeData.value.map(({ key }) => key), ['/project-report.md'])
+  assert.deepEqual(workspaceRequests, [])
+
+  panel.view.openFileSearch('thread')
+  const projectMatches = await panel.view.searchActiveTreeFiles('report')
+  assert.deepEqual(projectMatches.entries.map(({ path }) => path), ['/project-match.md'])
+  projectName = 'revised-project-report'
+  await panel.view.refreshTree('thread')
+  assert.deepEqual(panel.view.fileTreeData.value.map(({ key }) => key), ['/revised-project-report.md'])
+  assert.deepEqual(workspaceRequests, [])
+
+  panel.props.sections.push({ key: 'workspace-tree', type: 'workspace-tree', title: '个人空间文件' })
+  panel.props.activeSectionKey = 'workspace-tree'
+  panel.props.filesystemVisible = false
+  await setImmediate()
+  assert.deepEqual(panel.view.workspaceTreeData.value.map(({ key }) => key), ['/personal-report.md'])
+
+  panel.view.openFileSearch('workspace')
+  const workspaceMatches = await panel.view.searchActiveTreeFiles('report')
+  assert.deepEqual(workspaceMatches.entries.map(({ path }) => path), ['/personal-match.md'])
+
+  workspaceName = 'revised-personal-report'
+  await panel.view.refreshTree('workspace')
+  assert.deepEqual(panel.view.workspaceTreeData.value.map(({ key }) => key), ['/revised-personal-report.md'])
+  assert.deepEqual(projectRequests, [['tree', 'thread-a', '/'], ['search', 'thread-a', 'report'], ['tree', 'thread-a', '/']])
+  assert.deepEqual(workspaceRequests, [['tree', '/'], ['search', 'report'], ['tree', '/']])
+})
 
 test('会话面板的个人文件树、搜索和标签主动打开时读取最新内容，刷新和自动恢复不记录访问', async (t) => {
   const path = '/projects/notes.md'
@@ -138,11 +210,11 @@ test('会话面板的个人文件树、搜索和标签主动打开时读取最�
   workspaceApi.getWorkspaceFileContent = filePath => content('GET', filePath)
   workspaceApi.openWorkspaceFile = filePath => content('POST', filePath)
   const showTree = async () => {
-    panel.props.activeSectionKey = 'file-tree'
+    panel.props.activeSectionKey = 'workspace-tree'
     panel.props.activePreview = null
     await panel.settle()
   }
-  panel.props.sections.push(section)
+  panel.props.sections.push(section, { key: 'workspace-tree', type: 'workspace-tree' })
   await showTree()
   panel.view.onWorkspaceFileSelect([path], { node: { isLeaf: false, fileData: file } })
   await panel.settle()
@@ -151,6 +223,7 @@ test('会话面板的个人文件树、搜索和标签主动打开时读取最�
   await panel.settle()
   assert.equal(panel.view.currentFile.value.content, '版本 1')
   await showTree()
+  panel.view.openFileSearch('workspace')
   panel.view.handleSearchSelect(file)
   await panel.settle()
   assert.equal(panel.view.currentFile.value.content, '版本 2')
@@ -158,7 +231,7 @@ test('会话面板的个人文件树、搜索和标签主动打开时读取最�
   panel.view.activateSection(section)
   await panel.settle()
   assert.equal(panel.view.currentFile.value.content, '版本 3')
-  await panel.view.emitRefresh()
+  await panel.view.refreshActivePreview()
   await panel.settle()
   assert.equal(panel.view.currentFile.value.content, '版本 4')
   await showTree()
@@ -169,7 +242,7 @@ test('会话面板的个人文件树、搜索和标签主动打开时读取最�
   assert.deepEqual(accesses, ['POST', 'POST', 'POST', 'GET'].map(method => [method, path]))
 })
 
-test('同名交付物在终态通知后更新，默认个人空间树不阻断活动产物刷新', async (t) => {
+test('同名交付物在终态通知后更新，两个文件区域不阻断活动产物刷新', async (t) => {
   const panel = await setupPanel(t)
   assert.match(panel.view.currentFile.value.content, /20万元/)
   assert.equal(panel.requests.length, 1, '同时触发的首次预览应共享同一次读取')
@@ -186,7 +259,7 @@ test('同名交付物在终态通知后更新，默认个人空间树不阻断�
 test('产物预览中的手动刷新读取当前产物，不只刷新个人空间树', async (t) => {
   const panel = await setupPanel(t)
   panel.update('<h1>手动修订</h1>')
-  await panel.view.emitRefresh()
+  await panel.view.refreshActivePreview()
   await panel.settle()
   assert.match(panel.view.currentFile.value.content, /手动修订/)
 })

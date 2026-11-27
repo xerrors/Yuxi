@@ -35,7 +35,8 @@ def middleware(tmp_path, monkeypatch):
     """真实用户目录承载写入，回读磁盘证明而不是 mock 调用次数。"""
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "users"))
     ensure_user_workspace("media-user")
-    return ToolMediaPersistMiddleware(uid="media-user", media_dir=_MEDIA_DIR)
+    (user_workspace_dir("media-user") / "projects/p1").mkdir(parents=True)
+    return ToolMediaPersistMiddleware(uid="media-user", workdir_path="projects/p1")
 
 
 def _request(call_id: str = "call-1", name: str = "computer_observe") -> ToolCallRequest:

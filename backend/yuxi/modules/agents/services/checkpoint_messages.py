@@ -15,7 +15,7 @@ from yuxi.modules.agents.repositories.model_audit import ModelMessageAuditReposi
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.tool_audit import ToolMessageAuditRepository
 from yuxi.modules.agents.services.run_lifecycle import complete_run_runtime_cleanup, lock_run_lifecycle, settle_checkpoint
-from yuxi.modules.agents.services.scheduler import Dispatch, deliver
+from yuxi.modules.agents.services.scheduler import deliver
 from yuxi.modules.agents.tool_results import TOOL_FAILURE_MESSAGE, tool_result_text
 from yuxi.shared.datetime import utc_now
 
@@ -44,12 +44,13 @@ async def save_messages_from_langgraph_state(
         raise ValueError("持久化 AgentRun 输出需要 worker、thread 和 Turn 因果归属")
 
     run_repo = AgentRunRepository(db)
-    next_dispatch: Dispatch | None = None
+    next_run_id: str | None = None
     try:
         await db.flush()
         locked = await lock_run_lifecycle(db, run_id=run_id, thread_id=thread_id, turn_id=turn_id, allow_steer=complete_run)
-        persisted_run, pending_steer = locked.run, locked.pending_steer
-        continue_after_cancelled_steer = complete_run and steer_before_model and pending_steer is None
+        persisted_run = locked.run
+        has_ready_steer = bool(locked.steer_batch)
+        continue_after_cancelled_steer = complete_run and steer_before_model and not has_ready_steer
         if continue_after_cancelled_steer:
             complete_run = False
         locked_run = await run_repo.lock_output_persistence(
@@ -128,7 +129,7 @@ async def save_messages_from_langgraph_state(
                 if tool_call_id in tool_audits_by_operation:
                     state_tool_messages[tool_call_id] = msg_dict
 
-        if complete_run and pending_steer is None and last_state_ai and last_state_ai.get("invalid_tool_calls"):
+        if complete_run and not has_ready_steer and last_state_ai and last_state_ai.get("invalid_tool_calls"):
             names = ", ".join(call.get("name") or "unknown" for call in last_state_ai["invalid_tool_calls"])
             raise ValueError(f"工具调用参数无效，任务未完成：{names}。请继续输入并分段重试。")
 
@@ -158,10 +159,10 @@ async def save_messages_from_langgraph_state(
             )
         if complete_run or interrupt_run:
             terminal_ai_message = reconciled_audits.get(last_state_ai_id or "")
-            if complete_run and pending_steer is None and terminal_ai_message is None:
+            if complete_run and not has_ready_steer and terminal_ai_message is None:
                 raise ValueError("最终 State AIMessage 无法与当前 Run 的 Model lifecycle 事实关联")
             last_ai_message = terminal_ai_message
-        if complete_run and pending_steer is None and last_ai_message is None:
+        if complete_run and not has_ready_steer and last_ai_message is None:
             raise ValueError("最终 checkpoint 缺少当前 Run 的 AI 输出")
         if last_ai_message is not None:
             has_tool_calls = bool((last_ai_message.extra_metadata or {}).get("tool_calls"))
@@ -189,11 +190,11 @@ async def save_messages_from_langgraph_state(
             if not settlement.changed:
                 raise ValueError(f"AgentRun 输出已写入但 {terminal_status} 终态未能在同一事务提交")
             terminal_status = settlement.status
-            next_dispatch = settlement.next_dispatch
+            next_run_id = settlement.next_run_id
         await db.commit()
-        if next_dispatch:
+        if next_run_id:
             await complete_run_runtime_cleanup(persisted_run)
-            await deliver(next_dispatch)
+            await deliver(next_run_id)
         return "running" if continue_after_cancelled_steer else terminal_status
     except asyncio.CancelledError:
         await db.rollback()

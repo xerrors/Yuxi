@@ -14,7 +14,7 @@ Owner：backend/yuxi/modules/workspace/runtime_paths.py
 
 ### 实现方案
 
-`is_conversation_archive_path` 识别路径组件中紧挨着的 `outputs` 与上述两个目录名。`delete_workspace_path` 和 `delete_viewer_file` 在真正删除前抛出 `InvalidOperationError`，业务码 `conversation_archive_protected`。Workdir 祖先保护仍先按原规则判断根和祖先；留档判断覆盖目录内部路径。
+`is_conversation_archive_path` 识别路径组件中紧挨着的 `outputs` 与上述两个目录名。`delete_workspace_path` 和 `delete_viewer_file` 在真正删除前抛出 `InvalidOperationError`，业务码 `conversation_archive_protected`。留档判断覆盖直接指向这些目录和其内部的路径。个人空间对 Workdir 及其祖先目录的删除见[目录删除与会话继续执行](2026-11-27-agent-task-workdir.md)。
 
 ## 替代方案
 

@@ -12,7 +12,7 @@ from yuxi.infrastructure.filesystem import copy_file_fd, open_directory_fd, open
 from yuxi.modules.extensions.skills.projection import get_user_skills_root_dir
 from yuxi.modules.workspace.errors import FileTransferLimitError
 from yuxi.modules.workspace.filesystem import Workspace
-from yuxi.modules.workspace.paths import user_workspace_dir
+from yuxi.modules.workspace.paths import normalize_workdir_path, user_workspace_dir
 from yuxi.modules.workspace.runtime_paths import SHARED_SKILLS_PATH, WORKSPACE_PATH, normalize_runtime_path
 
 MAX_FILE_BYTES = 100 * 1024 * 1024
@@ -21,10 +21,11 @@ MAX_FILE_BYTES = 100 * 1024 * 1024
 class RuntimeFiles:
     """Workspace 可写，共享 Skill 投影只读；其他路径交给 VM。"""
 
-    def __init__(self, uid: str):
+    def __init__(self, uid: str, *, workdir_path: str | None = None):
         """身份由运行上下文或认证层提供。"""
         self.uid = uid
         self.workspace = Workspace(uid)
+        self._workdir_root = f"/{normalize_workdir_path(workdir_path)}" if workdir_path else None
 
     def route(self, path: str):
         """只按受信挂载前缀路由，不存在或链接错误不能回退到 VM。"""
@@ -45,6 +46,15 @@ class RuntimeFiles:
             raise PermissionError("path is outside the user Workspace")
         return "/" + "/".join(route[2])
 
+    def require_readable_file(self, path: str) -> None:
+        """在运行时挂载内校验可读取的普通文件，不复制内容。"""
+        route = self.route(path)
+        if route is None:
+            raise PermissionError("path is outside the user mounts")
+        _, root, parts, _ = route
+        with open_regular_file_fd(root, parts):
+            pass
+
     def read(self, path: str, max_bytes: int = MAX_FILE_BYTES) -> bytes:
         """普通文件有界读取，共享 Skill 同样拒绝链接。"""
         normalized, root, parts, readonly = self.route(path)
@@ -61,12 +71,19 @@ class RuntimeFiles:
 
     def write(self, path: str, content: bytes, *, overwrite: bool) -> None:
         """新建或完整发布 Workspace 文件，不跟随宿主链接。"""
+        scope = self.scope(path)
         self.workspace.upload_authorized_file_from_stream(
-            self.scope(path),
+            scope,
             io.BytesIO(content),
             max_bytes=MAX_FILE_BYTES,
             overwrite=overwrite,
+            root=self._write_root(scope),
         )
+
+    def upload_from_path(self, path: str, source_path: str) -> None:
+        """从服务临时文件发布到当前用户 Workspace。"""
+        scope = self.scope(path)
+        self.workspace.upload_authorized_file_from_path(scope, source_path, root=self._write_root(scope))
 
     def download_to_path(self, path: str, target_path: str, max_bytes: int) -> int:
         """将当前用户挂载中的普通文件有界导出到服务临时文件。"""
@@ -126,3 +143,10 @@ class RuntimeFiles:
                 if entry["is_dir"]:
                     pending.append((entry["path"], depth + 1))
         return sorted(entries, key=lambda item: item["path"])
+
+    def _write_root(self, scope: str) -> str:
+        """写入当前 Workdir 时要求目录仍存在，其他 Workspace 路径沿用自身权限。"""
+        root = self._workdir_root
+        if root and (scope == root or scope.startswith(f"{root}/")):
+            return root
+        return "/"

@@ -18,6 +18,8 @@ AgentPanel 保留实际文件读取、目录刷新和预览展示，通过 works
 
 文件标签和缓存以个人空间或来源 Thread 加路径为键。成员文件进入根面板时，预览和下载仍沿用该成员的 Thread 与资源类型。删除文件或目录后，按操作所属 Thread 关闭匹配路径及其子项，保留相邻同前缀文件以及其他作用域的同路径预览。文件内容分别通过个人 workspace、对应 Thread 的 Workdir viewer 或 artifact 接口读取。
 
+HTML 预览在 30 MiB 原件读取上限内向 `AgentFilePreview` 的沙盒框架提供完整文档。按字符截断可能只留下 `<head>`，使浏览器无法展示正文。普通文本和 Markdown 仍可按字符提供节选。框架处理无显式基址的同框架页内点击，保留文档基址、相对资源解析和 CSP。真实点击调用 `stopImmediatePropagation()` 时，在当前监听器结束后复核默认动作。用户点击前，在已注册的 Window 捕获监听器之后观察传播结果，保留作者锚点属性及后续监听器对默认导航的取消。
+
 ## 替代方案
 
 保留页面全部职责不能降低文件修改的上下文。把协作/调试混合面板一起移到 workspace 会让文件域依赖 session。因此只迁移文件资源，由页面组合文件与会话导航。
@@ -33,6 +35,8 @@ AgentPanel 保留实际文件读取、目录刷新和预览展示，通过 works
 | 切换、关闭与销毁清理并拒绝迟到发布 | 标签清空但 URL 留存、旧数据回填 | filePreviewSession / filePreviewCache | `node --test test/unit/filePreviewSession.test.js test/unit/agentPanelFilesystemPolling.test.js test/unit/agentArtifactPreviewRefresh.test.js` | Thread/身份/销毁/关闭后旧请求返回，回收迟到 URL | Passed，23/23 |
 | 同名失效和目录关闭范围正确 | 旧产物命中、误删兄弟项 | 同上 | 同上 | 无元数据同名卡片、相邻同前缀、其他 Thread | Passed |
 | 页面组合与资源 Owner 不重复 | 两处维护删除和 URL 释放 | Workspace / AgentPanel | 源码搜索、lint、unit、build 和既有浏览器回归 | AgentPanel 无预览缓存释放循环，下载 URL 由下载动作拥有 | Passed |
+
+`htmlPreviewAnchors.js` 在 Chromium 复核鼠标与键盘页内滚动、停止传播、作者取消导航及相对资源解析，同时确认显式基址和作者脚本的 CSP。
 
 最终全量 frontend lint/unit（1104/1104）/build 与阅读浏览器回归通过，命令与前端协议覆盖范围见 [Thread 阅读决定](2026-11-17-thread-session-reading.md)。
 

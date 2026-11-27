@@ -131,6 +131,18 @@ async def test_agents_key_cannot_use_product_routes_or_spoof_source(test_client,
         assert agents.status_code == 200, agents.text
         agent = agents.json()["agents"][0]
         agent_slug = agent.get("agent_id") or agent["slug"]
+        web_create = await test_client.post(
+            "/api/agent/threads",
+            json={"agent_id": agent_slug, "workdir_naming_text": "Web draft"},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
+        assert web_create.status_code == 403, web_create.text
+        named_public_create = await test_client.post(
+            "/api/v1/agents/sessions",
+            json={"agent_id": agent_slug, "yuxi": {"workdir_naming_text": "Web draft"}},
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        )
+        assert named_public_create.status_code == 422, named_public_create.text
         forged_thread = await test_client.post(
             "/api/v1/agents/sessions",
             json={"agent_id": agent_slug, "app_id": "integration-app"},

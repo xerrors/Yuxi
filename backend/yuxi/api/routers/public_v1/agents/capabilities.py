@@ -158,7 +158,6 @@ async def save_thread_artifact(
     db: AsyncSession = Depends(get_db),
 ):
     """把已授权 Thread 产物保存到用户工作区。"""
-    await require_thread(db=db, scope=context.scope, thread_id=session_id)
     return await save_thread_artifact_to_workspace_view(
         thread_id=session_id,
         current_uid=context.scope.uid,
@@ -179,7 +178,6 @@ async def retrieve_thread_artifact(
     db: AsyncSession = Depends(get_db),
 ):
     """下载或预览已授权 Thread 的沙盒产物。"""
-    await require_thread(db=db, scope=context.scope, thread_id=session_id)
     return render_file_result(
         await resolve_thread_artifact_view(
             thread_id=session_id,

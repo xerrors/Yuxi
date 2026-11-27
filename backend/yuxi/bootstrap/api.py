@@ -16,6 +16,7 @@ from yuxi.modules.identity.oidc import get_oidc_config
 from yuxi.modules.identity.provider import require_provider_config
 from yuxi.modules.identity.security import AuthUtils
 from yuxi.modules.knowledge.mcp.auth import require_knowledge_delegation_config
+from yuxi.modules.workspace.services.quota import get_workspace_quota_bytes
 
 
 class RequiredStartupComponentError(RuntimeError):
@@ -44,6 +45,7 @@ async def startup(app: FastAPI) -> None:
     await _initialize_startup_component(app, name="security_secrets", required=True, operation=AuthUtils.require_security_secrets)
     await _initialize_startup_component(app, name="oidc_config", required=True, operation=get_oidc_config)
     await _initialize_startup_component(app, name="oidc_provider_config", required=True, operation=require_provider_config)
+    await _initialize_startup_component(app, name="workspace_quota_config", required=True, operation=get_workspace_quota_bytes)
 
     # 共享持久定义只由 Compose 中的 app-init 初始化；运行进程仅校验兼容版本。
     pg_manager.initialize()

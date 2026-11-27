@@ -157,8 +157,9 @@ def text_events(text="hello", metadata=None):
     return events
 
 
-async def test_execution_keeps_attachments_on_each_inputs_message(monkeypatch):
+async def test_execution_keeps_attachments_on_each_inputs_message(monkeypatch, tmp_path):
     """各 Input 的附件只补入自己的末条消息，保留正文和图片。"""
+    from yuxi.modules.workspace.paths import user_workspace_dir
     from yuxi.shared.datetime import utc_now
 
     agent = FakeAgent()
@@ -178,6 +179,11 @@ async def test_execution_keeps_attachments_on_each_inputs_message(monkeypatch):
         )
         for message_id, input_id in ((2, "input-a"), (4, "input-b"), (99, "input-old"))
     ]
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path))
+    uploads = user_workspace_dir("user-1") / "uploads"
+    uploads.mkdir(parents=True)
+    for attachment in attachments:
+        (uploads / attachment.filename).write_bytes(b"x")
     attachments_by_message = {1: [], 2: [attachments[0]], 3: [], 4: [attachments[1]], 99: [attachments[2]]}
 
     async def for_messages(message_ids):

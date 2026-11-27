@@ -12,8 +12,6 @@ from yuxi.modules.extensions.skills.projection import get_user_skills_root_dir
 from yuxi.modules.workspace.errors import FileTransferLimitError
 from yuxi.modules.workspace import runtime_files
 from yuxi.modules.workspace.runtime_paths import workspace_scope_from_runtime_path
-from yuxi.modules.workspace.services.bindings import AuthorizedWorkdir
-from yuxi.modules.workspace.workdir import Workdir
 from yuxi.shared.errors import ContentTooLargeError, DomainError, InvalidOperationError, PermissionDeniedError, ResourceNotFoundError
 
 
@@ -78,20 +76,18 @@ def live_files(monkeypatch, tmp_path):
     backend.skill_root.mkdir(parents=True)
     (backend.skill_root / "SKILL.md").write_bytes(b"projected skill")
     monkeypatch.setattr(runtime_files, "Workspace", lambda _uid: backend)
-    binding = AuthorizedWorkdir(
-        session_record_id=1,
-        thread_id="thread-1",
-        uid="user-1",
-        workdir=Workdir("projects/11111111-1111-4111-8111-111111111111", backend),
-        project_id="11111111-1111-4111-8111-111111111111",
-        directory_mode="managed",
-    )
+    thread = object()
 
-    async def resolve(**kwargs):
-        assert kwargs["uid"] == "user-1"
-        return binding
+    async def load_thread(*, db, scope, thread_id):
+        assert (scope.uid, scope.app_id, thread_id) == ("user-1", None, "thread-1")
+        return thread
 
-    monkeypatch.setattr(svc, "resolve_authorized_workdir", resolve)
+    async def workdir_path(*, db, agent_session, uid):
+        assert agent_session is thread and uid == "user-1"
+        return "projects/11111111-1111-4111-8111-111111111111"
+
+    monkeypatch.setattr(svc, "require_thread", load_thread)
+    monkeypatch.setattr(svc, "resolve_session_workdir_path", workdir_path)
     monkeypatch.setattr(
         svc,
         "UserRepository",

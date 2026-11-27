@@ -25,6 +25,7 @@ async def create_legacy_schema(manager):
     await create_knowledge_tables(manager)
     await create_schema_version_table(manager)
     async with manager.async_engine.begin() as conn:
+        await conn.execute(text("DROP TABLE workspace_usage"))
         await conn.execute(text("DROP TABLE workspace_recent_files"))
         await conn.execute(text("ALTER TABLE sessions DROP COLUMN agent_state_view"))
         await conn.execute(text("ALTER TABLE mcp_servers DROP COLUMN code_owned"))
@@ -557,7 +558,7 @@ async def test_direct_selection_does_not_authorize_a_larger_plugin(tmp_path, rep
 
 
 async def test_plugin_migration_cli_registers_models_in_a_cold_process(tmp_path):
-    """验证冷进程的插件迁移及正式 v0.8.0 到当前版本的升级。"""
+    """验证冷进程的插件迁移及正式 v0.8.0 到当前版本的完整升级。"""
     schema, admin, engine, manager = await create_isolated_manager("pytest_plugin_cli")
     script = textwrap.dedent('''
         import os
@@ -641,7 +642,7 @@ async def test_plugin_migration_cli_registers_models_in_a_cold_process(tmp_path)
 
         with pytest.raises(RuntimeError, match="business=5"):
             await require_current_schema(manager)
-        for module, version in (("agent_state_view", 6), ("workspace_recent_files", 7)):
+        for module, version in (("agent_state_view", 6), ("workspace_recent_files", 7), ("workspace_usage", 8)):
             result = await asyncio.to_thread(
                 subprocess.run,
                 [sys.executable, "-c", script, f"yuxi.migrations.{module}"],

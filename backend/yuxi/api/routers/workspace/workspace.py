@@ -25,6 +25,7 @@ from yuxi.modules.workspace.services.files import (
     upload_workspace_files,
     write_workspace_file_content,
 )
+from yuxi.modules.workspace.services.quota import workspace_usage
 
 workspace = APIRouter(prefix="/workspace", tags=["workspace"])
 workspace_knowledge = APIRouter(prefix="/workspace", tags=["workspace"])
@@ -38,6 +39,12 @@ class CreateWorkspaceDirectoryRequest(BaseModel):
 class UpdateWorkspaceFileContentRequest(BaseModel):
     path: str
     content: str
+
+
+@workspace.get("/usage")
+async def get_workspace_usage(current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)) -> dict:
+    """读取登录用户的软配额和最近一次用量。"""
+    return await workspace_usage(db, str(current_user.uid))
 
 
 @workspace.get("/tree", response_model=dict)
@@ -183,9 +190,8 @@ async def update_workspace_file(
 async def delete_workspace_file_route(
     path: str = Query(..., description="工作区文件或目录路径"),
     current_user: User = Depends(get_required_user),
-    db: AsyncSession = Depends(get_db),
 ):
-    return await delete_workspace_path(path=path, current_user=current_user, db=db)
+    return await delete_workspace_path(path=path, current_user=current_user)
 
 
 @workspace.post("/directory", response_model=dict)
@@ -206,6 +212,7 @@ async def upload_workspace_files_route(
     relative_paths: list[str] | None = Form(None, description="与 files 顺序对齐的相对路径"),
     files: list[UploadFile] = File(..., description="上传文件列表"),
     current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
 ):
     try:
         inputs = await prepare_upload_files(
@@ -220,6 +227,7 @@ async def upload_workspace_files_route(
         files=inputs,
         relative_paths=relative_paths,
         current_user=current_user,
+        db=db,
     )
 
 

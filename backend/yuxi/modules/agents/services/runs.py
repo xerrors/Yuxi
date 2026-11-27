@@ -10,6 +10,8 @@ from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.scope import ActorScope
+from yuxi.modules.agents.services.attachments import readable_ready_prefix
+from yuxi.modules.workspace.services.bindings import session_workdir_is_available
 from yuxi.shared.errors import ResourceNotFoundError
 
 
@@ -34,7 +36,11 @@ async def should_yield_for_steer(run_id: str) -> bool:
             for_update=False,
             turn_id=turn.id,
         )
-        return pending is not None and not await AttachmentRepository(db).has_unready(pending.id)
+        if pending is None or await AttachmentRepository(db).has_unready(pending.id):
+            return False
+        return await session_workdir_is_available(agent_session=agent_session, db=db) and bool(
+            await readable_ready_prefix(db=db, batch=[pending])
+        )
 
 
 async def get_run_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: str, run_id: str) -> dict:

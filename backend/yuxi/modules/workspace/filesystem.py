@@ -24,6 +24,7 @@ from yuxi.infrastructure.filesystem import (
 )
 from yuxi.modules.workspace.errors import FileTransferLimitError
 from yuxi.modules.workspace.paths import normalize_workspace_scope, user_workspace_dir, validate_directory_name
+from yuxi.modules.workspace.usage_changes import workspace_cleanup, workspace_mutation
 
 # 文件读写统一按 1MB 分块，控制单次读取的内存占用。
 _READ_CHUNK_SIZE = 1024 * 1024
@@ -33,8 +34,8 @@ class Workspace:
     """以 uid 为边界访问持久化 UserWorkspace。"""
 
     def __init__(self, uid: str):
-        uid = str(uid)
-        self._workspace_root = user_workspace_dir(uid)
+        self.uid = str(uid)
+        self._workspace_root = user_workspace_dir(self.uid)
 
     def list_authorized_directory(self, path: str, *, root: str) -> list[dict]:
         """列出 Workdir 内的普通文件与真实目录。"""
@@ -49,6 +50,17 @@ class Workspace:
                     continue
                 entries.append({"name": name, **self._metadata_from_stat(item_stat)})
             return entries
+        finally:
+            os.close(directory_fd)
+
+    def require_authorized_directory(self, path: str, *, root: str) -> None:
+        """验证真实目录在当前权限下可打开、可向下访问。"""
+        self._require_within(path, root)
+        base, parts = self._resolve_path(path)
+        directory_fd = self._open_directory(base, parts)
+        try:
+            if not os.access(".", os.X_OK, dir_fd=directory_fd, effective_ids=True):
+                raise PermissionError("directory is not searchable")
         finally:
             os.close(directory_fd)
 
@@ -137,8 +149,9 @@ class Workspace:
     def write_authorized_file(self, path: str, content: bytes) -> dict:
         """通过已打开的普通文件描述符覆盖内容，拒绝 symlink 与目录。"""
         with self._open_regular_file(path, writable=True) as (target_fd, _target_stat):
-            os.ftruncate(target_fd, 0)
-            write_all_fd(target_fd, content)
+            with workspace_mutation(self.uid):
+                os.ftruncate(target_fd, 0)
+                write_all_fd(target_fd, content)
             final_stat = os.fstat(target_fd)
             return self._metadata_from_stat(final_stat)
 
@@ -160,7 +173,7 @@ class Workspace:
                 if not stat.S_ISREG(target_stat.st_mode):
                     raise PermissionError("only regular files can be replaced")
 
-            with self._staged_temp_file(parent_fd, ".yuxi-replace-") as (temp_fd, temp_name):
+            with workspace_mutation(self.uid), self._staged_temp_file(parent_fd, ".yuxi-replace-") as (temp_fd, temp_name):
                 write_all_fd(temp_fd, content)
                 os.fsync(temp_fd)
                 final_stat = os.fstat(temp_fd)
@@ -195,12 +208,15 @@ class Workspace:
         *,
         overwrite: bool = True,
         create_parents: bool = True,
+        root: str = "/",
     ) -> dict:
-        """从受信任服务临时文件原子写入 UserWorkspace。"""
+        """从受信任服务临时文件原子写入 UserWorkspace；root 必须是已存在的授权根，父目录只在它内部补建。"""
         with os.fdopen(os.open(source_path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as source:
             if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
                 raise ValueError("upload source is not a regular file")
-            return self.upload_authorized_file_from_stream(path, source, max_bytes=None, overwrite=overwrite, create_parents=create_parents)
+            return self.upload_authorized_file_from_stream(
+                path, source, max_bytes=None, overwrite=overwrite, create_parents=create_parents, root=root
+            )
 
     def upload_authorized_file_from_stream(
         self,
@@ -210,40 +226,40 @@ class Workspace:
         max_bytes: int | None,
         overwrite: bool = True,
         create_parents: bool = True,
+        root: str = "/",
     ) -> dict:
-        """分块消费借用的文件流，超限或读取失败时回收未发布文件。"""
-        base, parts = self._resolve_path(path)
-        if not parts:
-            raise IsADirectoryError(path)
-        parent_fd = self._open_directory(base, parts[:-1], create=create_parents)
-        try:
-            with self._staged_temp_file(parent_fd, ".yuxi-write-") as (temp_fd, temp_name):
-                written = 0
-                while chunk := source.read(_READ_CHUNK_SIZE):
-                    written += len(chunk)
-                    if max_bytes is not None and written > max_bytes:
-                        raise FileTransferLimitError("file exceeds limit")
-                    write_all_fd(temp_fd, chunk)
-                final_stat = os.fstat(temp_fd)
-                if overwrite:
-                    os.rename(temp_name, parts[-1], src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-                else:
-                    os.link(temp_name, parts[-1], src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
-                    os.unlink(temp_name, dir_fd=parent_fd)
-            return self._metadata_from_stat(final_stat)
-        finally:
-            os.close(parent_fd)
+        """分块消费借用的文件流，超限或读取失败时回收未发布文件；写入根同 root 约束。"""
+        with workspace_mutation(self.uid):
+            parent_fd, name = self._open_write_parent(path, root=root, create_parents=create_parents)
+            try:
+                with self._staged_temp_file(parent_fd, ".yuxi-write-") as (temp_fd, temp_name):
+                    written = 0
+                    while chunk := source.read(_READ_CHUNK_SIZE):
+                        written += len(chunk)
+                        if max_bytes is not None and written > max_bytes:
+                            raise FileTransferLimitError("file exceeds limit")
+                        write_all_fd(temp_fd, chunk)
+                    final_stat = os.fstat(temp_fd)
+                    if overwrite:
+                        os.rename(temp_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+                    else:
+                        os.link(temp_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
+                        os.unlink(temp_name, dir_fd=parent_fd)
+                return self._metadata_from_stat(final_stat)
+            finally:
+                os.close(parent_fd)
 
-    def copy_authorized_directory_from_path(self, path: str, source_path: str | Path) -> tuple[int, int]:
+    def copy_authorized_directory_from_path(self, path: str, source_path: str | Path, *, root: str = "/") -> tuple[int, int]:
         """复制服务临时目录到独占的新目录，失败时回收本次产物。"""
-        base, parts = self._resolve_path(path)
-        if not parts:
-            raise IsADirectoryError(path)
         # Workspace 的父目录由服务拥有，不挂载进沙盒；半成品只在这里存在。
-        with tempfile.TemporaryDirectory(prefix=".yuxi-copy-", dir=base.parent) as staging, ExitStack() as stack:
+        with (
+            workspace_mutation(self.uid),
+            tempfile.TemporaryDirectory(prefix=".yuxi-copy-", dir=self._workspace_root.parent) as staging,
+            ExitStack() as stack,
+        ):
             source_fd = open_directory_fd(Path(source_path), ())
             stack.callback(os.close, source_fd)
-            parent_fd = self._open_directory(base, parts[:-1], create=True)
+            parent_fd, name = self._open_write_parent(path, root=root, create_parents=True)
             stack.callback(os.close, parent_fd)
             staging_fd = open_directory_fd(Path(staging), ())
             stack.callback(os.close, staging_fd)
@@ -254,7 +270,7 @@ class Workspace:
             target_stat = os.fstat(target_fd)
             identity = (target_stat.st_dev, target_stat.st_ino)
             copy_directory_fd(source_fd, target_fd)
-            publish_directory_fd(staging_fd, "directory", parent_fd, parts[-1])
+            publish_directory_fd(staging_fd, "directory", parent_fd, name)
             return identity
 
     def create_authorized_directory(self, parent_path: str, name: str, *, root: str) -> dict:
@@ -264,7 +280,8 @@ class Workspace:
         base, parts = self._resolve_path(parent_path)
         parent_fd = self._open_directory(base, parts)
         try:
-            os.mkdir(name, 0o700, dir_fd=parent_fd)
+            with workspace_mutation(self.uid):
+                os.mkdir(name, 0o700, dir_fd=parent_fd)
             item_stat = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
         finally:
             os.close(parent_fd)
@@ -276,7 +293,8 @@ class Workspace:
         base, parts = self._resolve_path(path)
         parent_fd = self._open_directory(base, parts[:-1])
         try:
-            self._remove_entry(parent_fd, parts[-1], expected_identity=expected_identity)
+            with workspace_cleanup(self.uid):
+                self._remove_entry(parent_fd, parts[-1], expected_identity=expected_identity)
         finally:
             os.close(parent_fd)
 
@@ -301,13 +319,26 @@ class Workspace:
             raise ValueError("path is outside the Workdir")
 
     @staticmethod
-    def _open_directory(base: Path, parts: tuple[str, ...], *, create: bool = False) -> int:
+    def _open_directory(base: Path | int, parts: tuple[str, ...], *, create: bool = False) -> int:
         try:
             return open_directory_fd(base, parts, create=create)
         except OSError as exc:
             if exc.errno == errno.ELOOP:
                 raise PermissionError("symlink paths are not allowed") from exc
             raise
+
+    def _open_write_parent(self, path: str, *, root: str, create_parents: bool) -> tuple[int, str]:
+        """先打开既有授权根，只在其内部补建目标的父目录。"""
+        self._require_within(path, root)
+        base, parts = self._resolve_path(path)
+        _, root_parts = self._resolve_path(root)
+        if len(parts) == len(root_parts):
+            raise IsADirectoryError(path)
+        root_fd = self._open_directory(base, root_parts)
+        try:
+            return self._open_directory(root_fd, parts[len(root_parts) : -1], create=create_parents), parts[-1]
+        finally:
+            os.close(root_fd)
 
     def _open_regular_file(self, path: str, *, writable: bool):
         """固定父目录与最终普通文件，统一拒绝 symlink、目录和特殊文件。"""

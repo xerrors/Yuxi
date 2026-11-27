@@ -43,7 +43,7 @@ export function useAgentMentionConfig({
   currentThreadAttachments,
   configurableItems,
   agentConfig,
-  sessionPlugins,
+  sessionResources,
   mcpServers,
   agents
 }) {
@@ -80,18 +80,23 @@ export function useAgentMentionConfig({
       getAgentConfigOptions(configItems.mcps).map(getAgentConfigOptionValue)
     )
     const resources = {}
-    MENTION_FIELDS.forEach(([field, output]) => {
-      const options = getAgentConfigOptions(configItems[field])
-      const byValue = new Map(options.map((option) => [getAgentConfigOptionValue(option), option]))
-      const selected = getVisibleAgentResourceSelection(currentConfig[field], configItems[field], [
-        ...byValue.keys()
-      ])
-      resources[output] = [...new Set(selected)]
-        .map((value) => normalizeMentionResource(byValue.get(value), field))
+    const sessionOptions = sessionResources?.value
+    for (const [field, output] of MENTION_FIELDS) {
+      let selectedOptions
+      if (sessionOptions == null) {
+        const options = getAgentConfigOptions(configItems[field])
+        const byValue = new Map(options.map((option) => [getAgentConfigOptionValue(option), option]))
+        const selected = getVisibleAgentResourceSelection(
+          currentConfig[field], configItems[field], [...byValue.keys()]
+        )
+        selectedOptions = [...new Set(selected)].map((value) => byValue.get(value))
+      } else {
+        selectedOptions = sessionOptions[field] || []
+      }
+      resources[output] = selectedOptions
+        .map((option) => normalizeMentionResource(option, field))
         .filter(Boolean)
-    })
-    // 已有会话使用后端按冻结配置和当前权限过滤的目录，空列表不回退到 Agent。
-    resources.plugins = sessionPlugins?.value ?? resources.plugins
+    }
 
     return {
       files,

@@ -16,22 +16,22 @@ from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.repositories.attachments import AttachmentRepository
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.runs import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.runtime.sandbox import get_sandbox_provider
 from yuxi.modules.agents.scope import ActorScope
+from yuxi.modules.agents.services.attachments import readable_ready_prefix
 from yuxi.modules.agents.services.checkpoint_retention import purge_thread_checkpoint_history
 from yuxi.modules.agents.services.cooperation_notifications import notify_turn_state
 from yuxi.modules.agents.services.queue_control import pause_pending_queue
 from yuxi.modules.agents.services.run_creation import create_turn_run
-from yuxi.modules.agents.services.scheduler import Dispatch, dispatch_next_input
+from yuxi.modules.agents.services.scheduler import dispatch_next_input
 from yuxi.modules.agents.services.thread_access import require_thread
 from yuxi.modules.agents.services.tracing import finish_turn_observation_if_terminal
 from yuxi.modules.agents.services.transport import clear_cancel_signal
-from yuxi.modules.workspace.services.bindings import resolve_session_workdir_binding
+from yuxi.modules.workspace.services.bindings import session_workdir_is_available
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,7 +40,7 @@ class RunSettlement:
 
     status: str
     changed: bool
-    next_dispatch: Dispatch | None = None
+    next_run_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,7 +50,7 @@ class LockedRunLifecycle:
     agent_session: Session
     turn: AgentTurn
     run: AgentRun
-    pending_steer: AgentInput | None
+    steer_batch: list[AgentInput]
 
 
 async def lock_run_lifecycle(
@@ -84,14 +84,14 @@ async def lock_run_lifecycle(
     if turn is None or (require_current and turn.current_run_id != run_id):
         raise ValueError("AgentRun 不是当前 Turn 的执行段")
     if allow_steer:
-        pending_steer = await _lock_ready_steer(db, agent_session=agent_session, turn=turn)
+        steer_batch = await _lock_ready_steer(db, agent_session=agent_session, turn=turn)
     else:
         await AgentInputRepository(db).get_pending_steer(thread_id=candidate.thread_id, uid=candidate.uid, app_id=candidate.app_id)
-        pending_steer = None
+        steer_batch = []
     run = await repo.lock_run_for_user(run_id, candidate.uid)
     if run is None or run.thread_id != agent_session.thread_id or run.turn_id != turn.id or run.app_id != agent_session.app_id:
         raise ValueError("Run 的生命周期归属不一致")
-    return LockedRunLifecycle(agent_session=agent_session, turn=turn, run=run, pending_steer=pending_steer)
+    return LockedRunLifecycle(agent_session=agent_session, turn=turn, run=run, steer_batch=steer_batch)
 
 
 async def settle_run(
@@ -131,7 +131,7 @@ async def settle_checkpoint(
     error_message: str | None = None,
 ) -> RunSettlement:
     """在生命周期边界内更新 Run/Turn；提交和接续投递由用例拥有。"""
-    run, agent_session, turn, pending_steer = locked.run, locked.agent_session, locked.turn, locked.pending_steer
+    run, agent_session, turn = locked.run, locked.agent_session, locked.turn
     turn_repo = AgentTurnRepository(db)
     run_repo = AgentRunRepository(db)
     if turn.current_run_id != run.id:
@@ -139,12 +139,12 @@ async def settle_checkpoint(
     if agent_session.uid != run.uid or agent_session.app_id != run.app_id:
         raise ValueError("Run 的 Thread 归属不一致")
 
-    if status == "completed" and pending_steer is not None:
+    if status == "completed" and locked.steer_batch:
         terminal, changed = await run_repo.set_terminal_status(run.id, status="yielded", token_usage=token_usage, worker_id=worker_id)
         if terminal is None or not changed:
             raise ValueError("Steer 接管前当前 Run 所有权已失效")
-        next_dispatch = await _consume_steer(db=db, agent_session=agent_session, turn=turn, previous=run, pending=pending_steer)
-        return RunSettlement(status="yielded", changed=True, next_dispatch=next_dispatch)
+        next_run_id = await _consume_steer(db=db, agent_session=agent_session, turn=turn, previous=run, batch=locked.steer_batch)
+        return RunSettlement(status="yielded", changed=True, next_run_id=next_run_id)
 
     if status == "interrupted" and turn.status == "running":
         if not waitpoint or waitpoint.get("run_id") != run.id:
@@ -313,35 +313,38 @@ async def reconcile_cancelling_turns() -> list[str]:
     return settled
 
 
-async def _lock_ready_steer(db: AsyncSession, *, agent_session: Session, turn: AgentTurn) -> AgentInput | None:
-    """在 Thread/Turn 锁之后锁定 steer，裁决附件就绪，再允许取得 Run 锁。"""
+async def _lock_ready_steer(db: AsyncSession, *, agent_session: Session, turn: AgentTurn) -> list[AgentInput]:
+    """在 Thread/Turn 锁之后锁定 steer 队头并选择连续就绪批次，再取得 Run 锁。"""
     if turn.status != "running" or agent_session.queue_paused:
-        return None
-    pending = await AgentInputRepository(db).get_pending_steer(
+        return []
+    input_repo = AgentInputRepository(db)
+    pending = await input_repo.get_pending_steer(
         thread_id=agent_session.thread_id,
         uid=agent_session.uid,
         app_id=agent_session.app_id,
         turn_id=turn.id,
     )
-    if pending is None or await AttachmentRepository(db).has_unready(pending.id):
-        return None
-    return pending
+    if pending is None or not await session_workdir_is_available(agent_session=agent_session, db=db):
+        return []
+    batch = await input_repo.ready_batch(
+        thread_id=agent_session.thread_id, uid=agent_session.uid, app_id=agent_session.app_id, turn_id=turn.id
+    )
+    if not batch or batch[0].id != pending.id or batch[0].kind != "steer":
+        return []
+    return await readable_ready_prefix(db=db, batch=batch)
 
 
-async def _consume_steer(*, db: AsyncSession, agent_session: Session, turn: AgentTurn, previous: AgentRun, pending) -> Dispatch:
+async def _consume_steer(*, db: AsyncSession, agent_session: Session, turn: AgentTurn, previous: AgentRun, batch: list[AgentInput]) -> str:
     """消费 Thread 优先批次，在当前 Turn 建立下一执行段。"""
     input_repo = AgentInputRepository(db)
-    batch = await input_repo.ready_batch(thread_id=previous.thread_id, uid=previous.uid, app_id=previous.app_id, turn_id=turn.id)
-    if not batch or batch[0].id != pending.id or batch[0].kind != "steer":
-        raise ValueError("Steer 队头已变化或尚未就绪")
+    pending = batch[0]
     run = await create_turn_run(
         db=db, agent_session=agent_session, turn=turn, source=pending, previous=previous, api_key_id=pending.api_key_id, input_batch=batch
     )
     run_id = run.id
     messages = await input_repo.consume(inputs=batch, turn_id=turn.id, run_id=run_id)
     await AgentRunRepository(db).set_input_message(run_id, messages[0].id)
-    binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=previous.uid, db=db)
-    return Dispatch(run_id=run_id, binding=binding)
+    return run_id
 
 
 async def _clear_waitpoint_checkpoint(run: AgentRun) -> None:

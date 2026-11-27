@@ -4,6 +4,10 @@ async (page) => {
   const check = (value, message) => { if (!value) throw new Error(message) }
   const origin = page.url().split('/').slice(0, 3).join('/')
   const agent = { agent_id: 'default-chatbot', name: '智能助手', can_run: true, configurable_items: {}, config_json: { context: {} } }
+  let missingWorkdir = false
+  let toolWaitpoint = false
+  let workdirHold
+  const stopError = '停止请求未确认，请重试。'
   let phase = 'old', failNextTurn = false, releaseFailure, onRequestHeld
   const turn = () => ({
     id: 'approval-turn', status: phase === 'running' ? 'in_progress' : 'requires_action',
@@ -11,7 +15,8 @@ async (page) => {
       current_run_id: phase === 'old' ? 'run-A' : 'run-B', output: [], runs: [],
       waitpoint: phase === 'running' ? null : {
         id: phase === 'old' ? 'wait-A' : 'wait-B',
-        run_id: phase === 'old' ? 'run-A' : 'run-B', kind: 'answer',
+        run_id: phase === 'old' ? 'run-A' : 'run-B', kind: toolWaitpoint ? 'approval' : 'answer',
+        calls: toolWaitpoint ? [{ name: 'write_file', args: { file_path: '/report.txt' } }] : [],
         questions: [{ question_id: 'question', question: phase === 'old' ? '是否继续旧任务？' : '请确认新的任务？', allow_other: true }]
       }
     }
@@ -26,6 +31,15 @@ async (page) => {
   await page.route('**/api/**', async route => {
     const request = route.request(), path = request.url().split('?')[0].replace(/^https?:\/\/[^/]+/, '')
     const reply = body => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
+    if (path === '/api/agent/threads/approval-thread/workdir' && missingWorkdir) {
+      if (workdirHold) await workdirHold.promise
+      return route.fulfill({ status: 409, json: { detail: {
+        code: 'session_workdir_unavailable', message: '对话的工作目录已不存在或不可访问'
+      } } })
+    }
+    if (missingWorkdir && path.endsWith('/approval-thread/events') && request.method() === 'POST') {
+      return route.fulfill({ status: 409, json: { detail: stopError } })
+    }
     if (path.includes('/sessions/approval-thread')) {
       if (path.endsWith('/items')) return reply({
         data: [input], has_more: false, last_id: input.id,
@@ -49,7 +63,7 @@ async (page) => {
     if (path === '/api/v1/agents/sessions') return reply({ data: [session()], has_more: false, last_id: null })
     if (path === '/api/agent') return reply({ agents: [agent] })
     if (path === '/api/agent/default-chatbot') return reply(agent)
-    if (path === '/api/mention/plugins') return reply([])
+    if (path === '/api/mention/resources') return reply({})
     if (path === '/api/system/info') return reply({
       success: true, data: { branding: { name: 'Yuxi', logo: '/favicon.svg', title: '语析' } }
     })
@@ -115,13 +129,33 @@ async (page) => {
       }
       check(await page.getByText('准备报告，执行前请确认。', { exact: true }).isVisible(), '审批变化时会话历史仍可见')
       check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), '审批工作区超出视口')
-      await page.screenshot({ path: `/tmp/yuxi-approval-failure-${next}.png`, fullPage: true, animations: 'disabled' })
       results.push({ scenario: next, ...actual })
     }
+    phase = 'old'
+    missingWorkdir = true
+    await page.goto(`${origin}/agent/approval-thread`)
+    const dialog = page.locator('[role="dialog"]:visible')
+    await dialog.getByRole('alert').getByText('该对话的工作目录已不存在或不可访问，只能查看历史记录。').waitFor()
+    await dialog.getByRole('button', { name: '停止本轮', exact: true }).click()
+    await dialog.getByRole('alert').getByText(stopError, { exact: true }).waitFor()
+    check(await dialog.getByRole('button', { name: '提交', exact: true }).isDisabled(), '缺失目录时不能恢复等待点')
+    results.push({ scenario: 'workdir-missing-stop-failed' })
+    toolWaitpoint = true
+    workdirHold = Promise.withResolvers()
+    await page.goto(`${origin}/agent/approval-thread`)
+    const allow = dialog.getByRole('button', { name: '允许', exact: true })
+    await allow.focus()
+    workdirHold.resolve()
+    const stop = dialog.getByRole('button', { name: '停止本轮任务', exact: true })
+    await stop.waitFor()
+    await page.waitForFunction(button => document.activeElement === button, await stop.elementHandle())
+    check(await allow.count() === 0, '工作目录缺失后不能继续工具审批')
+    results.push({ scenario: 'workdir-missing-tool-focus' })
     check(!pageErrors.length, `页面异常：${pageErrors.join('; ')}`)
     return results
   } finally {
     releaseFailure?.()
+    workdirHold?.resolve()
     page.off('pageerror', onPageError)
     await page.unrouteAll({ behavior: 'wait' })
   }

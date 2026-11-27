@@ -76,7 +76,7 @@ async (page) => {
       return reply(session(id))
     }
     if (path === '/api/v1/agents/sessions') return reply({ data: request.url().includes('is_pinned=true') ? [] : [session(rootId)], has_more: false })
-    if (path === '/api/mention/plugins') return reply([])
+    if (path === '/api/mention/resources') return reply({})
     if (path === '/api/agent') return reply({ agents: [agent] })
     if (path === `/api/agent/${agentId}`) return reply(agent)
     if (path === '/api/auth/me' || path.endsWith('/users/me')) return reply({ id: 1, username: '协作验证用户', uid: 'sync-fixture-user', role: 'user' })
@@ -98,7 +98,8 @@ async (page) => {
   await member.getByRole('heading', { name: '协作任务需要你的回答', exact: true }).waitFor()
   const answer = member.getByRole('dialog').getByRole('textbox')
   await answer.fill('成员的未提交答案')
-  await page.getByRole('tab', { name: '文件', exact: true }).click()
+  await page.getByRole('tab', { name: '开始', exact: true }).click()
+  await page.getByRole('button', { name: '工作区文件', exact: true }).click()
   await page.getByRole('tab', { name: /^资料整理/ }).click()
   check(await answer.inputValue() === '成员的未提交答案', '切换成员标签不应清除当前等待点的答案')
   await page.getByRole('button', { name: '最大化面板', exact: true }).click()
@@ -139,7 +140,7 @@ async (page) => {
   await member.getByText('第二条外部排队输入', { exact: true }).waitFor()
   check(await member.getByRole('textbox', { name: /问点什么/ }).isEditable(), '外部取消后旧等待仍然禁止普通输入')
   await page.locator('.agent-view').screenshot({ path: '/tmp/yuxi-cooperation-sync-cancelled.png', animations: 'disabled' })
-  await page.getByRole('tab', { name: '文件', exact: true }).click()
+  await page.getByRole('tab', { name: '工作区文件', exact: true }).click()
   const beforeViewed = viewed.filter(id => id === childId).length
   stage = 'running'
   await page.waitForFunction(async () => {
@@ -147,7 +148,7 @@ async (page) => {
     return useSessionRuntimeStore().getThreadState('sync-child')?.activeRunId === 'run-sync-child-next'
   })
   check(viewed.filter(id => id === childId).length === beforeViewed, '隐藏成员对账错误标记已读')
-  check(await page.getByRole('tab', { name: '文件', exact: true }).getAttribute('aria-selected') === 'true', '后台成员更新抢走活动标签')
+  check(await page.getByRole('tab', { name: '工作区文件', exact: true }).getAttribute('aria-selected') === 'true', '后台成员更新抢走活动标签')
   await page.getByRole('tab', { name: '资料整理', exact: true }).click()
   await member.getByText('外部第二轮任务', { exact: true }).waitFor()
   check(streams === 1, '新轮次应该只建立一个 SSE')

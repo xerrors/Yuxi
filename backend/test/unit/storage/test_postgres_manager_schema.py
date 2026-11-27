@@ -40,6 +40,8 @@ async def test_runtime_rejects_missing_or_incompatible_schema_versions(monkeypat
     """运行进程只接受两个域均精确匹配当前版本。"""
     versions = AsyncMock(return_value={})
     monkeypatch.setattr(schema_versions, "get_schema_versions", versions)
+    require_workspace_schema = AsyncMock()
+    monkeypatch.setattr(schema_versions, "require_workspace_schema", require_workspace_schema)
     manager = object()
 
     with pytest.raises(RuntimeError, match=r"business=missing .*knowledge=missing"):
@@ -48,12 +50,14 @@ async def test_runtime_rejects_missing_or_incompatible_schema_versions(monkeypat
     versions.return_value = {"business": 99, "knowledge": schema_versions.KNOWLEDGE_SCHEMA_VERSION}
     with pytest.raises(RuntimeError, match="business=99"):
         await schema_versions.require_current_schema(manager)
+    require_workspace_schema.assert_not_awaited()
 
     versions.return_value = {
         "business": schema_versions.BUSINESS_SCHEMA_VERSION,
         "knowledge": schema_versions.KNOWLEDGE_SCHEMA_VERSION,
     }
     await schema_versions.require_current_schema(manager)
+    require_workspace_schema.assert_awaited_once_with(manager)
 
 
 def test_ownership_columns_can_store_enterprise_identity_without_truncation():

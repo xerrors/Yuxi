@@ -62,6 +62,24 @@ def test_workspace_write_overwrites_existing_file_without_following_links(backen
     assert (root / "alias.txt").read_text() == "rewritten"
 
 
+def test_bound_file_tools_cannot_recreate_deleted_workdir(backend, tmp_path):
+    """运行中删除绑定目录后，Agent 写入仍要求目录存在。"""
+    root = user_workspace_dir("one") / "project"
+    root.mkdir()
+    bound = UserSandboxBackend(uid=backend.id, workdir_path="project")
+    root.rmdir()
+    path = f"{WORKSPACE_PATH}/project/nested/result.txt"
+    # 只在缺失授权根上失败，而不是任一路径或权限错误。
+    assert bound.write(path, "cannot restore").error == f"File '{path}' not found"
+    source = tmp_path / "upload.txt"
+    source.write_text("cannot restore")
+    with pytest.raises(FileNotFoundError):
+        bound.upload_authorized_file_from_path(path, str(source))
+    assert not root.exists()
+    assert bound.write(f"{WORKSPACE_PATH}/project-other/nested/result.txt", "allowed").error is None
+    assert (root.parent / "project-other/nested/result.txt").read_text() == "allowed"
+
+
 def test_symlink_cannot_escape_to_other_user_and_never_falls_back(backend):
     """恢复 symlink 缺陷会泄露另一用户字节。"""
     other = user_workspace_dir("two")

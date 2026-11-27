@@ -37,6 +37,7 @@ x-api-worker-env: &api-worker-env
   SANDBOX_EXEC_TIMEOUT_SECONDS: ${SANDBOX_EXEC_TIMEOUT_SECONDS:-180}
   SANDBOX_MAX_OUTPUT_BYTES: ${SANDBOX_MAX_OUTPUT_BYTES:-262144}
   BACKGROUND_JOB_DEFAULT_TIMEOUT_SECONDS: ${BACKGROUND_JOB_DEFAULT_TIMEOUT_SECONDS:-86400}
+  WORKSPACE_QUOTA_BYTES: ${WORKSPACE_QUOTA_BYTES-10737418240}
   # Agent run
   RUN_CANCEL_KEY_TTL_SECONDS: ${RUN_CANCEL_KEY_TTL_SECONDS:-1800}
   RUN_EVENTS_STREAM_TTL_SECONDS: ${RUN_EVENTS_STREAM_TTL_SECONDS:-7200}
@@ -62,7 +63,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.1.beta1}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.1.beta2}
     working_dir: /app
     user: "1000:1000"
     volumes:
@@ -121,7 +122,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.1.beta1}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.1.beta2}
     working_dir: /app
     user: "1000:1000"
     volumes:
@@ -179,7 +180,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.1.beta1}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.1.beta2}
     working_dir: /app
     volumes:
       - ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/skill-sources:/app/skill-sources
@@ -205,7 +206,7 @@ services:
     build:
       context: .
       dockerfile: docker/sandbox.Dockerfile
-    image: ${SANDBOX_CONTAINER_IMAGE:-yuxi-sandbox:${YUXI_VERSION:-0.8.1.beta1}}
+    image: ${SANDBOX_CONTAINER_IMAGE:-yuxi-sandbox:${YUXI_VERSION:-0.8.1.beta2}}
     command: ["true"]
     network_mode: none
     profiles:
@@ -216,7 +217,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.1.beta1}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.1.beta2}
     working_dir: /app
     # Docker socket 等价于宿主 root；只允许这个专用进程持有。
     user: "0:0"
@@ -237,7 +238,7 @@ services:
       YUXI_ENV: ${YUXI_ENV:-development}
       SANDBOX_RUNNER_TOKEN: ${SANDBOX_RUNNER_TOKEN:-}
       SANDBOX_CONTAINER_SOCKET: /var/run/docker.sock
-      SANDBOX_CONTAINER_IMAGE: ${SANDBOX_CONTAINER_IMAGE:-yuxi-sandbox:${YUXI_VERSION:-0.8.1.beta1}}
+      SANDBOX_CONTAINER_IMAGE: ${SANDBOX_CONTAINER_IMAGE:-yuxi-sandbox:${YUXI_VERSION:-0.8.1.beta2}}
       SANDBOX_CONTAINER_IMAGE_DIGEST: ${SANDBOX_CONTAINER_IMAGE_DIGEST:-}
       SANDBOX_CONTAINER_NETWORK: ${SANDBOX_CONTAINER_NETWORK:-none}
       SANDBOX_CONTAINER_MEMORY_BYTES: ${SANDBOX_CONTAINER_MEMORY_BYTES:-1073741824}
@@ -261,6 +262,8 @@ services:
       retries: 5
       start_period: 30s
     depends_on:
+      storage-init:
+        condition: service_completed_successfully
       sandbox-image:
         condition: service_completed_successfully
     profiles:
@@ -271,7 +274,7 @@ services:
       context: .
       dockerfile: docker/frontend.Dockerfile
       target: development
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-frontend:${YUXI_VERSION:-0.8.1.beta1}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-frontend:${YUXI_VERSION:-0.8.1.beta2}
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/test:/app/test
@@ -375,7 +378,7 @@ services:
     build:
       context: .
       dockerfile: docker/storage-init.Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-storage-init:${YUXI_VERSION:-0.8.1.beta1}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-storage-init:${YUXI_VERSION:-0.8.1.beta2}
     network_mode: none
     user: "0:0"
     volumes:

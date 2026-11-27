@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
-from yuxi.modules.agents.runtime.context import resolve_agent_resource_options
+from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
+from yuxi.modules.agents.runtime.context import parse_resource_selection, resolve_agent_resource_options
 from yuxi.modules.agents.scope import ActorScope
 from yuxi.modules.agents.services.thread_access import require_thread
 from yuxi.modules.workspace.filesystem import Workspace
@@ -33,10 +35,11 @@ MENTION_EXCLUDE_DIRS = frozenset(
 )
 MAX_MENTION_RESULTS = 50
 MAX_MENTION_CANDIDATES = 500
+KNOWLEDGE_MENTION_TIMEOUT_SECONDS = 2
 
 
-async def list_plugin_mentions(*, db, scope: ActorScope, thread_id: str, user) -> list[dict]:
-    """按会话冻结选择与当前运行权限列出可引用插件。"""
+async def list_session_mention_resources(*, db, scope: ActorScope, thread_id: str, user) -> dict[str, list[dict[str, str]]]:
+    """使用请求的只读会话校验归属，按会话快照列出可访问候选。"""
     agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id)
     agent = await AgentRepository(db).get_visible_by_slug(slug=agent_session.agent_id, user=user, for_run=True)
     if agent is None:
@@ -44,13 +47,34 @@ async def list_plugin_mentions(*, db, scope: ActorScope, thread_id: str, user) -
     if agent_session.config_snapshot is None:
         raise ValueError("Session 缺少配置快照")
 
-    selected = agent_session.config_snapshot.get("plugins", [])
-    options = await resolve_agent_resource_options({"plugins"}, db=db, user=user, agent_id=agent.id)
-    return [
-        {"id": option["key"], "name": option["name"], "description": option["description"]}
-        for option in options["plugins"]
-        if option["key"] in selected
-    ]
+    defaults = get_agent_backend(agent.backend_id).context_schema()
+    selections = {
+        field: parse_resource_selection(field, agent_session.config_snapshot.get(field, getattr(defaults, field)))
+        for field in ("plugins", "skills", "knowledges")
+    }
+    fields_to_load = {field for field, selection in selections.items() if selection}
+    options = await resolve_agent_resource_options(fields_to_load - {"knowledges"}, db=db, user=user, agent_id=agent.id)
+    if "knowledges" in fields_to_load:
+        from yuxi.modules.knowledge.mcp.client import knowledge_resource_options
+
+        # Knowledge MCP 也需要从同一个连接池取连接。
+        await db.close()
+        try:
+            async with asyncio.timeout(KNOWLEDGE_MENTION_TIMEOUT_SECONDS):
+                options["knowledges"] = await knowledge_resource_options(scope.uid)
+        except TimeoutError:
+            logger.bind(component="session_mentions", resource="knowledges", error_type="TimeoutError", available=False).warning(
+                "会话知识库候选加载超时"
+            )
+
+    resources = {}
+    for field, selection in selections.items():
+        candidates = options.get(field, [])
+        if selection != "all":
+            selected_keys = set(selection)
+            candidates = [option for option in candidates if option["key"] in selected_keys]
+        resources[field] = candidates
+    return resources
 
 
 async def search_session_mentions(*, db, scope: ActorScope, query: str) -> list[dict]:

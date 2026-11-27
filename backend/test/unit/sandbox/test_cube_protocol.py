@@ -391,6 +391,34 @@ def test_prepare_instance_rechecks_owner_after_cube_lookup(monkeypatch, from_wor
         sandbox_run_owner.reset(owner)
 
 
+def test_cube_reobserved_running_after_lost_resume_response_registers_workspace(monkeypatch, tmp_path):
+    """Cube 已接收唤醒但响应丢失后，再取得运行实例时仍补登用量。"""
+    from yuxi.modules.workspace.usage_changes import acknowledge_workspace_change, pending_workspace_changes
+
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path))
+    row = {"sandbox_id": "vm", "state": "paused", "traffic_token": "", "envd_token": "", "error": None}
+    remote = {"state": "paused"}
+
+    def resume(_):
+        """唤醒生效，API 客户端没有收到确认。"""
+        remote["state"] = "running"
+        raise TimeoutError("fixture lost response")
+
+    repository = SimpleNamespace(user_lock=lambda _uid: nullcontext(None), environment=lambda *_: row, save_environment=lambda *_: None)
+    adapter = SimpleNamespace(state=lambda _: remote["state"], connect=resume)
+    provider = CubeSandboxProvider(adapter=adapter, repository=repository)
+    with pytest.raises(UpstreamError, match="无法恢复"):
+        provider.get("uid")
+    assert row["state"] == "paused" and row["error"]
+    [first] = pending_workspace_changes()
+    acknowledge_workspace_change(first)
+    assert pending_workspace_changes() == []
+    assert provider.get("uid").sandbox_id == "vm"
+    assert row["state"] == "running" and row["error"] is None
+    [following] = pending_workspace_changes()
+    assert following.uid == "uid" and following.generation != first.generation
+
+
 def test_preparing_new_instance_rechecks_owner_after_mount_setup(monkeypatch, tmp_path):
     """准备共享目录期间撤销的租约不会留下创建记录或发起 VM 创建。"""
     repository = SandboxRepository()

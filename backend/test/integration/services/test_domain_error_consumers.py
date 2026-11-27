@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from test.integration.services.agent_input_fixtures import create_input_schema, drop_input_schema, start_input_run
+from test.integration.services.agent_input_fixtures import SCOPE, create_input_schema, drop_input_schema, start_input_run
 
 from test.integration.support.module_audit import isolated_audit_store
 from yuxi.infrastructure.redis import create_arq_redis_pool
@@ -22,6 +22,7 @@ from yuxi.modules.identity.models import User
 from yuxi.modules.schedules import service
 from yuxi.modules.schedules.models import ScheduledAgentJob, ScheduledAgentRun
 from yuxi.modules.workspace.models import Project
+from yuxi.modules.workspace.paths import user_workspace_dir
 from yuxi.shared.datetime import utc_now
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio, pytest.mark.self_managed_resources]
@@ -94,8 +95,16 @@ async def test_scheduled_dispatch_distinguishes_domain_rejection_from_transient_
             assert await observer.scalar(select(func.count()).select_from(AgentInput)) == 0
 
 
-async def test_arq_worker_persists_domain_rejection_without_http_prefix():
-    """真实 ARQ 子进程拒绝已删除会话，落库失败与原始消费归属。"""
+@pytest.mark.parametrize(
+    ("deleted", "message"),
+    [(True, "对话线程不存在"), (False, "对话的工作目录已不存在或不可访问")],
+    ids=["session-deleted", "workdir-deleted"],
+)
+async def test_arq_worker_persists_domain_rejection_without_http_prefix(monkeypatch, tmp_path, deleted, message):
+    """真实 ARQ 子进程拒绝失去执行条件的 pending Run，落库失败与消费归属。"""
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path))
+    workdir = user_workspace_dir(SCOPE.uid) / "projects/input-project"
+    workdir.mkdir(parents=True)
     schema, admin, engine = await create_input_schema()
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     queue = f"pytest_domain_worker_{uuid.uuid4().hex}"
@@ -103,10 +112,13 @@ async def test_arq_worker_persists_domain_rejection_without_http_prefix():
     process = None
     try:
         run = await start_input_run(sessions, running=False)
-        async with sessions() as db:
-            agent_session = await db.scalar(select(Session).where(Session.thread_id == "input-thread"))
-            agent_session.status = "deleted"
-            await db.commit()
+        if deleted:
+            async with sessions() as db:
+                agent_session = await db.scalar(select(Session).where(Session.thread_id == "input-thread"))
+                agent_session.status = "deleted"
+                await db.commit()
+        else:
+            workdir.rmdir()
 
         job = await redis.enqueue_job("process_agent_run", run.id, _queue_name=queue, _job_id=f"{queue}:run")
         assert job is not None
@@ -127,7 +139,7 @@ async def test_arq_worker_persists_domain_rejection_without_http_prefix():
             original_input = await observer.get(AgentInput, "input-0")
             assert persisted.status == "failed"
             assert persisted.error_type == "invalid_runtime_scope"
-            assert persisted.error_message == "对话线程不存在"
+            assert persisted.error_message == message
             assert persisted.finished_at is not None
             assert turn.status == "failed"
             assert turn.current_run_id == persisted.id
@@ -135,6 +147,7 @@ async def test_arq_worker_persists_domain_rejection_without_http_prefix():
             assert persisted.output_message_id is None
             assert original_input.status == "consumed"
             assert original_input.consumed_run_id == persisted.id
+        assert workdir.exists() is deleted
     finally:
         if process is not None and process.returncode is None:
             process.kill()

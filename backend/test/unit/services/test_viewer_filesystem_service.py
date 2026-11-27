@@ -5,6 +5,7 @@ import threading
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -75,7 +76,8 @@ class _Backend:
         if self.files.pop(path, None) is None:
             raise FileNotFoundError(path)
 
-    def upload_authorized_file_from_stream(self, path, source, *, max_bytes, overwrite=True):
+    def upload_authorized_file_from_stream(self, path, source, *, root, max_bytes, overwrite=True):
+        assert root == "/projects/11111111-1111-4111-8111-111111111111"
         content = source.read()
         if len(content) > max_bytes:
             raise FileTransferLimitError("file exceeds limit")
@@ -92,10 +94,7 @@ def realtime_viewer(monkeypatch):
     binding = AuthorizedWorkdir(
         session_record_id=1,
         thread_id="thread-1",
-        uid="user-1",
         workdir=Workdir("projects/11111111-1111-4111-8111-111111111111", backend),
-        project_id="11111111-1111-4111-8111-111111111111",
-        directory_mode="managed",
     )
 
     async def resolve(**kwargs):
@@ -319,7 +318,7 @@ async def test_viewer_upload_rejects_existing_and_batch_duplicate_names_without_
             parent_path="/",
             files=files,
             current_user=SimpleNamespace(uid="user-1"),
-            db=object(),
+            db=SimpleNamespace(get=AsyncMock(return_value=None)),
         )
 
     assert isinstance(exc.value, StateConflictError)
@@ -337,7 +336,7 @@ async def test_viewer_upload_maps_final_no_clobber_conflict_to_409(realtime_view
             parent_path="/",
             files=[FileInput(filename="report.txt", source=BytesIO(b"replacement"))],
             current_user=SimpleNamespace(uid="user-1"),
-            db=object(),
+            db=SimpleNamespace(get=AsyncMock(return_value=None)),
         )
 
     assert isinstance(exc.value, StateConflictError)
@@ -352,7 +351,7 @@ async def test_viewer_upload_returns_scope_path_and_artifact_url(realtime_viewer
         parent_path="/",
         files=[FileInput(filename="new.txt", source=BytesIO(b"content"))],
         current_user=SimpleNamespace(uid="user-1"),
-        db=object(),
+        db=SimpleNamespace(get=AsyncMock(return_value=None)),
     )
 
     assert result["entries"] == [

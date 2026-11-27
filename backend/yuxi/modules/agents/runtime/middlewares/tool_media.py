@@ -43,10 +43,10 @@ class ToolMediaPersistMiddleware(AgentMiddleware):
     带 SAVED_MEDIA_KEY 的结果，模型上下文与前端回看共享同一份路径事实。
     """
 
-    def __init__(self, *, uid: str, media_dir: str):
+    def __init__(self, *, uid: str, workdir_path: str):
         """身份与目录由运行上下文提供，写失败只降级不阻塞工具链路。"""
-        self._files = RuntimeFiles(uid)
-        self._media_dir = media_dir
+        self._files = RuntimeFiles(uid, workdir_path=workdir_path)
+        self._media_dir = workdir_tool_media_dir(runtime_workdir_path(workdir_path))
 
     def wrap_tool_call(
         self,
@@ -182,5 +182,4 @@ def create_tool_media_middleware(context) -> ToolMediaPersistMiddleware | None:
     workdir = str(getattr(context, "workdir_relative_path", "") or "").strip()
     if not uid or not workdir:
         return None
-    media_dir = workdir_tool_media_dir(runtime_workdir_path(workdir))
-    return ToolMediaPersistMiddleware(uid=uid, media_dir=media_dir)
+    return ToolMediaPersistMiddleware(uid=uid, workdir_path=workdir)

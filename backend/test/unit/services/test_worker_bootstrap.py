@@ -90,6 +90,7 @@ async def test_worker_startup_prepares_runtime_and_recovers_jobs(monkeypatch: py
     monkeypatch.setattr(worker_bootstrap, "_sweep_checkpoint_garbage_forever", fake_checkpoint_sweep_loop)
     monkeypatch.setattr(worker_bootstrap, "recover_scheduled_dispatches", fake_recover_scheduled_dispatches)
     monkeypatch.setattr(worker_bootstrap, "claim_and_dispatch_due_jobs", fake_claim_and_dispatch_due_jobs)
+    monkeypatch.setattr(worker_bootstrap, "_scan_workspace_usage_forever", AsyncMock())
 
     ctx = {}
     await worker_bootstrap.startup(ctx)
@@ -114,6 +115,25 @@ async def test_worker_startup_prepares_runtime_and_recovers_jobs(monkeypatch: py
         "checkpoint_sweep_loop",
     ]
     assert ctx["worker_id"] == worker_bootstrap.WORKER_ID
+    await ctx[worker_bootstrap._WORKSPACE_USAGE_TASK_KEY]
+
+
+async def test_workspace_maintenance_retries_on_next_interval_after_failure(monkeypatch):
+    """巡检独立启动，并且一次数据库故障不取消后续周期。"""
+    attempts = 0
+
+    async def scan():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("database unavailable")
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(worker_bootstrap, "scan_workspace_usage", scan)
+    monkeypatch.setattr(worker_bootstrap, "WORKSPACE_USAGE_SCAN_INTERVAL_SECONDS", 0)
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(worker_bootstrap._scan_workspace_usage_forever(), 1)
+    assert attempts == 2
 
 
 @pytest.mark.asyncio

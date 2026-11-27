@@ -230,6 +230,10 @@ const handleAttachmentRemoved = (attachment) => {
 }
 
 const handleSend = (mode = 'follow_up') => {
+  if (props.isLoading) {
+    emit('send')
+    return
+  }
   if (currentImages.value.some((image) => image.status === 'uploading')) {
     // 占位中的图还没有 base64，此时发送等于丢图；等上传完再发。
     message.warning('图片还在上传中，请稍候再发送')

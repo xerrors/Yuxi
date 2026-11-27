@@ -1,5 +1,5 @@
 <template>
-  <div class="file-tree-wrapper" :class="treeClass">
+  <div class="file-tree-wrapper" :class="[treeClass, { compact }]">
     <a-tree
       :selected-keys="selectedKeys"
       :expanded-keys="expandedKeys"
@@ -17,8 +17,8 @@
       <template #icon="{ data, expanded }">
         <slot name="icon" :node="data" :expanded="expanded">
           <template v-if="data.isLeaf">
-            <FileTypeIcon v-if="useFileIcons" :name="data.key" :size="16" />
-            <FileText v-else :size="16" class="file-icon" />
+            <FileTypeIcon v-if="useFileIcons" :name="data.key" :size="compact ? 14 : 16" />
+            <FileText v-else :size="compact ? 14 : 16" class="file-icon" />
           </template>
           <template v-else>
             <span
@@ -26,7 +26,7 @@
               class="folder-loading-icon"
               aria-label="正在加载"
             ></span>
-            <FileTypeIcon v-else is-dir :size="18" />
+            <FileTypeIcon v-else is-dir :size="compact ? 16 : 18" />
           </template>
         </slot>
       </template>
@@ -90,7 +90,8 @@ const props = defineProps({
   useFileIcons: {
     type: Boolean,
     default: true
-  }
+  },
+  compact: Boolean
 })
 
 const emit = defineEmits([
@@ -163,7 +164,16 @@ const handleNodeClick = (data) => {
 
 <style scoped lang="less">
 .file-tree-wrapper {
+  --file-tree-row-height: 32px;
+  --file-tree-icon-width: 24px;
+  --file-tree-icon-gap: 4px;
   width: 100%;
+
+  &.compact {
+    --file-tree-row-height: 28px;
+    --file-tree-icon-width: 20px;
+    --file-tree-icon-gap: 3px;
+  }
 
   /* 统一节点容器 */
   :deep(.ant-tree-treenode) {
@@ -171,7 +181,7 @@ const handleNodeClick = (data) => {
     align-items: center;
     width: 100%;
     padding: 0 4px;
-    height: 32px;
+    height: var(--file-tree-row-height);
     border-radius: 6px;
     cursor: pointer;
     transition: background-color 0.15s ease;
@@ -197,8 +207,8 @@ const handleNodeClick = (data) => {
       align-items: center;
       flex: 1;
       min-width: 0;
-      height: 32px;
-      line-height: 32px;
+      height: var(--file-tree-row-height);
+      line-height: var(--file-tree-row-height);
       padding: 0 2px;
       border-radius: 0;
       background-color: transparent !important;
@@ -209,9 +219,9 @@ const handleNodeClick = (data) => {
         display: flex;
         align-items: center;
         justify-content: center;
-        width: 24px;
+        width: var(--file-tree-icon-width);
         height: 100%;
-        margin-right: 4px;
+        margin-right: var(--file-tree-icon-gap);
         flex-shrink: 0;
 
         .anticon {

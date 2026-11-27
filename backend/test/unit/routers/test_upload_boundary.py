@@ -91,8 +91,7 @@ def test_workspace_routes_convert_multipart_and_reject_oversize(monkeypatch, mod
     app = FastAPI()
     app.include_router(getattr(module, router))
     app.dependency_overrides[module.get_required_user] = lambda: SimpleNamespace(uid="user-1")
-    if module is viewer_router:
-        app.dependency_overrides[module.get_db] = lambda: object()
+    app.dependency_overrides[module.get_db] = lambda: object()
     monkeypatch.setattr(module, limit, 5)
     observed = []
 
@@ -119,9 +118,10 @@ def test_workspace_upload_route_passes_relative_paths_in_file_order(monkeypatch)
     app = FastAPI()
     app.include_router(workspace_router.workspace)
     app.dependency_overrides[workspace_router.get_required_user] = lambda: SimpleNamespace(uid="user-1")
+    app.dependency_overrides[workspace_router.get_db] = lambda: object()
     observed = {}
 
-    async def consume(*, parent_path, files, relative_paths, current_user):
+    async def consume(*, parent_path, files, relative_paths, current_user, db):
         """记录协议边界实际收到的最小事实。"""
         observed.update(
             parent_path=parent_path,

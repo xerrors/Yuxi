@@ -121,12 +121,12 @@ class UserSandboxBackend(BaseSandbox):
     """文件按挂载边界分流，所有命令使用同用户 VM。"""
 
     def __init__(self, *, uid: str, workdir_path: str | None = None):
-        """用户拥有环境，Project Workdir 只决定命令工作目录。"""
+        """用户拥有环境，Project Workdir 决定命令 cwd 和目录内写入的根。"""
         if not str(uid).strip():
             raise ValueError("uid is required")
         self._uid = str(uid)
         self._workdir_path = workdir_path
-        self._files = RuntimeFiles(self._uid)
+        self._files = RuntimeFiles(self._uid, workdir_path=workdir_path)
         self._provider = get_sandbox_provider()
         self._command_timeout_seconds = int(os.environ.get("SANDBOX_EXEC_TIMEOUT_SECONDS", "180"))
 
@@ -321,7 +321,7 @@ class UserSandboxBackend(BaseSandbox):
 
     def upload_authorized_file_from_path(self, path: str, source_path: str) -> None:
         """受信服务的附件只发布到用户 Workspace。"""
-        self._files.workspace.upload_authorized_file_from_path(self._files.scope(path), source_path)
+        self._files.upload_from_path(path, source_path)
 
     def download_authorized_file_to_path(self, path: str, target_path: str, max_bytes: int) -> int:
         """受信服务下载不扩大到 VM Home 或平台宿主路径。"""

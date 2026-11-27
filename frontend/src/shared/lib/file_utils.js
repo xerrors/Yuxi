@@ -3,11 +3,13 @@ import { formatRelative } from '@/shared/lib/time'
 
 export const formatRelativeTime = (value) => formatRelative(value)
 
-export const formatFileSize = (bytes) => {
+export const formatFileSize = (bytes, binaryUnits = false) => {
   if (bytes === 0 || bytes === '0') return '0 B'
   if (!bytes) return '-'
   const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
+  const sizes = binaryUnits
+    ? ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB', 'ZiB', 'YiB']
+    : ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }

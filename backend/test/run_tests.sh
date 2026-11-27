@@ -14,6 +14,7 @@ PYTEST_CMD=(
 )
 # 会话协作 E2E 单文件耗时约占整个批次的三分之二，CI 将它与其余生命周期文件分拓扑并行；
 # e2e 始终等于两个子集之和，保持本地一次性运行的入口不变。
+# 软配额 E2E 需要小额度的独立部署与重建，由 system-tests 直接调用，不计入下列子集。
 LIFECYCLE_COOPERATION_E2E_TESTS=(
     test/e2e/test_session_cooperation_e2e.py
 )

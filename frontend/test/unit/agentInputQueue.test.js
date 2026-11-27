@@ -98,6 +98,30 @@ test('较早队列快照不能覆盖新快照，取消一条不移除其他引�
   }
 })
 
+test('同一会话更换所属身份后，继续队列的旧回执不能刷新或禁用新会话', async (t) => {
+  for (const fail of [false, true]) {
+    const previous = { continueQueueInFlight: false }
+    const current = { continueQueueInFlight: false }
+    let state = previous
+    const result = Promise.withResolvers()
+    const command = t.mock.method(agentApi, 'continueThreadQueue', () => result.promise)
+    const readQueue = t.mock.method(agentApi, 'getThreadQueue', async () => ({ inputs: [] }))
+    const queue = useAgentInputQueue({ getThreadState: () => state })
+    const errors = []
+    const ongoing = queue.continueQueue('thread', (_id, error) => errors.push(error))
+    assert.equal(previous.continueQueueInFlight, true)
+    state = current
+    if (fail) result.reject({ response: { data: { detail: { code: 'session_workdir_unavailable' } } } })
+    else result.resolve({ status: 'accepted' })
+    assert.equal(await ongoing, false)
+    assert.deepEqual(errors, [])
+    assert.equal(readQueue.mock.callCount(), 0)
+    assert.equal(current.continueQueueInFlight, false)
+    command.mock.restore()
+    readQueue.mock.restore()
+  }
+})
+
 test('完整队列快照保留独立 steer 节点并遵循服务器优先顺序', async () => {
   const state = {
     queuedInputs: [

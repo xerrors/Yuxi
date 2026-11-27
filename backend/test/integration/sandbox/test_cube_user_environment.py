@@ -717,3 +717,68 @@ def test_confirmed_end_removes_marker_but_uncertain_launch_stays_cancelled(resou
     events = list(provider.adapter.stream(reference, "printf forbidden > late-start.txt", WORKSPACE_PATH, uncertain, timeout=5))
     assert next(event["end"]["exitCode"] for event in events if "end" in event) == 143
     assert not (user_workspace_dir(uid) / "late-start.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_workspace_usage_follows_real_cube_lifecycle(resources, tmp_path, monkeypatch):
+    """空闲且无人读取的 Cube 用户经过最后一次成功计量后退出巡检。"""
+    import asyncio
+
+    from yuxi.modules.workspace import usage_changes
+    from yuxi.modules.workspace.services import quota
+
+    uid, _, provider, backend = resources
+    # 标记索引独立于其他用户，真实目录与 Cube 挂载仍用测试部署的数据卷。
+    monkeypatch.setattr(usage_changes, "get_user_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(quota, "get_sandbox_provider", lambda: provider)
+    monkeypatch.setattr(provider.repository, "stale_commands", lambda: [])
+
+    def snapshot():
+        """从独立连接回读已经提交的成功测量。"""
+        with provider.repository.connect() as conn:
+            return conn.execute("SELECT used_bytes, measured_at, last_attempt_at FROM workspace_usage WHERE uid=%s", (uid,)).fetchone()
+
+    assert usage_changes.pending_workspace_changes() == []
+    reference = await asyncio.to_thread(provider.get, uid)
+    await quota.scan_workspace_usage()
+    first = snapshot()
+    assert first["measured_at"] is not None
+    assert [change.uid for change in usage_changes.pending_workspace_changes()] == [uid]
+
+    await asyncio.to_thread(run, backend, "dd if=/dev/zero of=quota-proof.bin bs=64K count=1 status=none")
+    assert (user_workspace_dir(uid) / "quota-proof.bin").stat().st_size == 65536
+    await quota.scan_workspace_usage()
+    active = snapshot()
+    assert active["measured_at"] > first["measured_at"] and active["used_bytes"] > first["used_bytes"]
+    assert [change.uid for change in usage_changes.pending_workspace_changes()] == [uid]
+
+    with provider.repository.connect() as conn:
+        conn.execute("UPDATE user_sandboxes SET last_active_at=now()-interval '10 minutes' WHERE uid=%s", (uid,))
+        candidate = provider.repository.environment(conn, uid)
+    monkeypatch.setattr(provider.repository, "environments", lambda: [candidate])
+    await asyncio.to_thread(provider.maintain)
+    assert provider.adapter.state(reference).lower() == "paused"
+
+    async def unavailable(_uid):
+        """模拟宿主读目录失败，验证真实数据库不会丢失上一观测。"""
+        raise OSError("故障注入：工作区不可读")
+
+    with monkeypatch.context() as failed_scan:
+        failed_scan.setattr(quota, "measure_allocated_bytes", unavailable)
+        await quota.scan_workspace_usage()
+    failed = snapshot()
+    assert failed["used_bytes"] == active["used_bytes"] and failed["measured_at"] == active["measured_at"]
+    assert failed["last_attempt_at"] > active["last_attempt_at"]
+    assert [change.uid for change in usage_changes.pending_workspace_changes()] == [uid]
+
+    await quota.scan_workspace_usage()
+    final = snapshot()
+    assert final["measured_at"] > active["measured_at"] and final["used_bytes"] == active["used_bytes"]
+    assert usage_changes.pending_workspace_changes() == []
+    await quota.scan_workspace_usage()
+    assert snapshot() == final
+
+    resumed = await asyncio.to_thread(provider.get, uid)
+    assert resumed.sandbox_id == reference.sandbox_id
+    assert provider.adapter.state(resumed).lower() == "running"
+    assert [change.uid for change in usage_changes.pending_workspace_changes()] == [uid]

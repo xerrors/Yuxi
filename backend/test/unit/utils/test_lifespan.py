@@ -165,7 +165,36 @@ async def test_disabled_knowledge_does_not_initialize_existing_backends(monkeypa
 
     assert app.state.startup_complete is True
     assert app.state.startup_components["knowledge_base"] == {"status": "disabled", "required": False}
-    assert initialized == ["security_secrets", "oidc_config", "oidc_provider_config", "model_cache", "sandbox_provider"]
+    assert initialized == ["security_secrets", "oidc_config", "oidc_provider_config", "workspace_quota_config", "model_cache", "sandbox_provider"]
+
+
+@pytest.mark.parametrize("limit", ["0", "invalid"])
+@pytest.mark.parametrize("process", ["api", "worker"])
+async def test_invalid_workspace_quota_blocks_startup(monkeypatch, limit, process):
+    """领取输入前拒绝非法配额，API 不进入接流量状态。"""
+    import yuxi.bootstrap.worker as worker_bootstrap
+
+    monkeypatch.setenv("YUXI_KNOWLEDGE_ENABLED", "false")
+    monkeypatch.setenv("OIDC_ENABLED", "false")
+    monkeypatch.setenv("YUXI_OIDC_PROVIDER_ENABLED", "false")
+    monkeypatch.setenv("API_KEY_DERIVATION_SECRET", "fixture-api-key-secret-at-least-thirty-two-characters")
+    monkeypatch.setenv("JWT_SECRET_KEY", "fixture-jwt-secret-at-least-thirty-two-characters")
+    monkeypatch.setenv("WORKSPACE_QUOTA_BYTES", limit)
+
+    def forbidden_initialize():
+        """非法额度必须在数据库装配前拒绝。"""
+        raise AssertionError("database startup must not begin")
+
+    monkeypatch.setattr(api_bootstrap.pg_manager, "initialize", forbidden_initialize)
+    if process == "worker":
+        with pytest.raises(RuntimeError, match="WORKSPACE_QUOTA_BYTES"):
+            await worker_bootstrap.startup({})
+    else:
+        app = FastAPI()
+        with pytest.raises(api_bootstrap.RequiredStartupComponentError, match="component=workspace_quota_config, type=RuntimeError"):
+            await api_bootstrap.startup(app)
+        assert app.state.startup_complete is False
+        assert app.state.startup_components["workspace_quota_config"] == {"status": "error", "required": True, "code": "RuntimeError"}
 
 
 @pytest.mark.parametrize("process", ["api", "worker"])

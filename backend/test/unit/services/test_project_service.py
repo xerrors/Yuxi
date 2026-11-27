@@ -136,10 +136,10 @@ async def test_implicit_project_uses_date_grouped_managed_workdir(monkeypatch, t
     )
     monkeypatch.setattr(svc.uuid, "uuid4", lambda: UUID("a1b2c3d4-e5f6-4789-8123-456789abcdef"))
 
-    project = await svc.create_implicit_project(uid="user-1", db=_Db())
+    project = await svc.create_implicit_project(uid="user-1", db=_Db(), naming_text="Draft quarterly report")
 
     assert project.id == "a1b2c3d4-e5f6-4789-8123-456789abcdef"
-    assert project.workdir_path == "projects/20260902/a1b2c3"
+    assert project.workdir_path == "agents/tasks/2026-09-02/draft-quarterly-report-a1b2c3"
     assert not (user_workspace_dir("user-1") / project.workdir_path).exists()
 
 
@@ -202,7 +202,11 @@ async def test_linked_project_rejects_file_and_symlink(monkeypatch, tmp_path: Pa
         assert isinstance(exc.value, InvalidOperationError)
 
 
-async def test_history_candidates_only_expose_resolved_directory_shortcuts(monkeypatch):
+async def test_history_candidates_only_expose_resolved_directory_shortcuts(monkeypatch, tmp_path):
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path))
+    workspace = tmp_path / "shared" / "user-1" / "workspace"
+    (workspace / "projects/shared").mkdir(parents=True)
+    (workspace / "clients/acme").mkdir(parents=True)
     updated_at = datetime(2026, 8, 22, 12, 0, 0)
     first = SimpleNamespace(
         thread_id="thread-1",
@@ -230,6 +234,7 @@ async def test_history_candidates_only_expose_resolved_directory_shortcuts(monke
         async def list_history_candidates(self, uid):
             assert uid == "user-1"
             return [
+                (same_directory, "projects/deleted"),
                 (first, "projects/shared"),
                 (same_directory, "projects/shared"),
                 (linked, "clients/acme"),

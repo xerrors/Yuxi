@@ -221,7 +221,7 @@ class FakeAttachmentRepository:
 def draft_env(monkeypatch):
     """附件记录与内容分开回读；锁的并发语义由真实 PG 验证。"""
     client = FakeMinioClient()
-    db = SimpleNamespace(records={}, commit=AsyncMock(), rollback=AsyncMock())
+    db = SimpleNamespace(records={}, get=AsyncMock(return_value=None), commit=AsyncMock(), rollback=AsyncMock())
     monkeypatch.setattr(service, "get_minio_client", lambda: client)
     monkeypatch.setattr(service, "AttachmentRepository", FakeAttachmentRepository)
     return client, db

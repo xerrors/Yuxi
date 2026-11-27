@@ -35,10 +35,9 @@ from yuxi.modules.agents.services.public_items import serialize_public_items
 from yuxi.modules.agents.services.scheduler import dispatch_next_input
 from yuxi.modules.agents.services.thread_access import require_thread
 from yuxi.modules.identity.models import User
-from yuxi.modules.workspace.paths import ensure_bound_user_workdir
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
-from yuxi.modules.workspace.services.bindings import resolve_session_workdir_binding
-from yuxi.modules.workspace.services.projects import create_implicit_project
+from yuxi.modules.workspace.services.bindings import ensure_session_workdir_available, resolve_session_workdir_binding
+from yuxi.modules.workspace.services.projects import create_implicit_project, materialize_implicit_project
 from yuxi.shared.errors import InvalidInputError, ResourceNotFoundError, StateConflictError
 from yuxi.shared.hashing import hash_id
 
@@ -59,6 +58,7 @@ async def create_thread(
     project_id: str | None = None,
     title: str | None = None,
     messages: list[AgentRunInputMessage] | None = None,
+    naming_text: str | None = None,
     attachment_file_ids: list[str] | None = None,
     mcps: list[str] | None = None,
     model_spec: str | None = None,
@@ -75,6 +75,7 @@ async def create_thread(
     mcps = list(dict.fromkeys(mcps or []))
     if file_ids and not input_messages:
         raise InvalidInputError("附件必须随非空输入提交")
+    workdir_naming_text = None if project_id or input_messages else naming_text
     intent_hash = input_intent_hash(
         "yuxi.session.create",
         agent_slug,
@@ -87,6 +88,7 @@ async def create_thread(
         [_message_intent(item) for item in input_messages],
         file_ids,
         *([{"mcps": mcps}] if mcps else []),
+        *([{"workdir_naming_text": workdir_naming_text}] if workdir_naming_text else []),
     )
     receipt_repo = AgentInputReceiptRepository(db)
     existing = await receipt_repo.get_for_scope(uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key)
@@ -123,13 +125,15 @@ async def create_thread(
     thread_metadata = {"source": source, "channel": channel}
     try:
         async with db.begin_nested():
-            project = (
-                await ProjectRepository(db).lock_active_for_user(project_id, scope.uid)
-                if project_id
-                else await create_implicit_project(uid=scope.uid, db=db)
-            )
-            if project is None:
-                raise ResourceNotFoundError("Project 不存在或不可访问")
+            if project_id:
+                project = await ProjectRepository(db).lock_active_for_user(project_id, scope.uid)
+                if project is None:
+                    raise ResourceNotFoundError("Project 不存在或不可访问")
+            else:
+                first_text = workdir_naming_text
+                if input_messages:
+                    first_text = next((message.content for message in input_messages if message.content.strip()), None)
+                project = await create_implicit_project(uid=scope.uid, db=db, naming_text=first_text)
             agent_session = await SessionRepository(db).add_session(
                 uid=scope.uid,
                 agent_id=agent_slug,
@@ -154,7 +158,9 @@ async def create_thread(
             require_receipt_replay(existing, "yuxi.session.create", intent_hash)
             return _accepted(existing)
         raise StateConflictError("Thread 创建冲突") from exc
-    binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=scope.uid, db=db, project=project)
+    if project_id:
+        binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=scope.uid, db=db, project=project)
+        binding.open_existing()
     if input_messages:
         receipt = await accept_locked(
             db=db,
@@ -183,9 +189,10 @@ async def create_thread(
             event_type="yuxi.session.create",
             intent_hash=intent_hash,
         )
+    if not project_id:
+        # 有初始输入时，提交后调度器即可领取。目录必须先于该入口可见。
+        materialize_implicit_project(project)
     await db.commit()
-    if binding.materialize_managed:
-        ensure_bound_user_workdir(binding.uid, binding.workdir_path)
     await dispatch_next_input(uid=scope.uid, agent_slug=agent_session.agent_id, thread_id=agent_session.thread_id)
     return _accepted(receipt)
 
@@ -237,6 +244,7 @@ async def accept_message(
         require_receipt_replay(existing, "agent.session.input.message", intent_hash)
         return _accepted(existing)
 
+    await ensure_session_workdir_available(agent_session=agent_session, uid=scope.uid, db=db)
     resume_queue = False
     if source == "public_api":
         from yuxi.modules.agents.services.cooperation import resume_tree_for_user_input

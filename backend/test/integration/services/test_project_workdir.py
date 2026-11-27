@@ -8,7 +8,7 @@ from test.support.sqlite import create_utc_sqlite_engine
 from yuxi.infrastructure.postgres.base import Base
 from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.workspace.models import Project
-from yuxi.modules.workspace.paths import ensure_bound_user_workdir
+from yuxi.modules.workspace.paths import user_workspace_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 
@@ -23,7 +23,7 @@ async def test_sessions_share_workdir_only_through_project(monkeypatch, tmp_path
     try:
         async with factory() as db:
             first_path = f"projects/2026-10-03_12-00-00_{uuid.uuid4().hex[:8]}"
-            ensure_bound_user_workdir("user-1", first_path)
+            (user_workspace_dir("user-1") / first_path).mkdir(parents=True)
             project = Project(
                 id=str(uuid.uuid4()),
                 uid="user-1",

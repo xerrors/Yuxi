@@ -159,6 +159,7 @@ async def test_worker_publishes_only_after_enabled_backends_are_ready(monkeypatc
         "_reconcile_agent_run_leases_forever",
         "_reconcile_background_jobs_forever",
         "_sweep_checkpoint_garbage_forever",
+        "_scan_workspace_usage_forever",
     ):
         monkeypatch.setattr(worker, name, AsyncMock())
     ctx = {}

@@ -1,6 +1,6 @@
 {
   "name": "yuxi-frontend",
-  "version": "0.8.1.beta1",
+  "version": "0.8.1.beta2",
   "private": true,
   "type": "module",
   "scripts": {

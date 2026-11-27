@@ -7,7 +7,7 @@ export function buildArtifactItems(artifacts) {
     .map((path) => ({ path, name: path.split('/').pop() || path }))
 }
 
-/** 折叠时只展示前三项，展开时展示全部。 */
+/** 最多展示四项；超过时折叠其余项，展开后展示全部。 */
 export function visibleArtifactItems(items, expanded) {
-  return expanded ? items : items.slice(0, 3)
+  return expanded || items.length <= 4 ? items : items.slice(0, 4)
 }

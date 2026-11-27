@@ -5,7 +5,8 @@ async page => {
   await page.unrouteAll({ behavior: 'wait' })
   const check = (ok, message) => { if (!ok) throw new Error(message) }
   const origin = page.url().split('/').slice(0, 3).join('/')
-  const agent = { agent_id: 'reading-agent', name: '阅读测试智能体', can_run: true, is_default: true, config_json: { context: {} }, configurable_items: {}, metadata: {} }
+  const agentReady = Promise.withResolvers()
+  const agent = { agent_id: 'reading-agent', name: '阅读测试智能体', can_run: true, is_default: true, config_json: { context: { model: 'fixture:chat' } }, configurable_items: {}, metadata: {} }
   const thread = { id: 'reading-thread', object: 'agent.session', status: 'completed', agent: { id: agent.agent_id }, metadata: {}, created_at: 1793400000, yuxi: { title: '对话阅读位置验证', context: {}, config: {}, current_turn: null, project_id: null } }
   const items = Array.from({ length: 24 }, (_, i) => ({
     id: `reading-message-${i}`, object: 'agent.session.item', type: 'message', role: 'user', status: 'completed', turn_id: `reading-turn-${i}`,
@@ -21,8 +22,9 @@ async page => {
     if (path.endsWith('/auth/me')) json = { id: 'reading-user', uid: 'reading-user', username: '阅读测试', role: 'superadmin' }
     if (path.endsWith('/check-first-run')) json = { first_run: false }
     if (path === '/api/user/config') json = { enable_memory: true }
+    if (path === '/api/agent' || path === '/api/agent/reading-agent') await agentReady.promise
     if (path === '/api/agent') json = { agents: [agent] }
-    if (path === '/api/mention/plugins') json = []
+    if (path === '/api/mention/resources') json = {}
     if (path === '/api/agent/reading-agent') json = agent
     if (path === '/api/projects') json = []
     if (path === '/api/v1/agents/sessions') json = { data: [thread], has_more: false }
@@ -44,7 +46,13 @@ async page => {
   await page.setViewportSize({ width: 1440, height: 960 })
   await page.goto(origin + '/agent/reading-thread')
   let chat = page.locator('.agent-view > .agent-session-workspace > .chat > .chat-content-container > .chat-main')
-  await chat.locator('.history-display-item').nth(12).waitFor()
+  try {
+    await chat.locator('.history-display-item').nth(12).waitFor()
+  } finally {
+    agentReady.resolve()
+  }
+  await chat.locator('[contenteditable="true"]').waitFor()
+  check(await chat.getByText('本会话沿用创建时的智能体配置', { exact: false }).count() === 0, '历史先于智能体详情返回时误报配置修改')
   await page.waitForTimeout(400) // 等待首次历史定位和布局过渡结束。
   /** 使用独立字符作为 oracle，记录同一文字重排前后的视窗坐标。 */
   const placeAnchor = async () => {

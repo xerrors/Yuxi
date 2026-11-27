@@ -48,7 +48,7 @@
       return route.fulfill({ status: 202, json: { object: 'yuxi.session.event.accepted', session_id: threadId, turn_id: turnId, run_id: runId, status: 'accepted' } })
     }
     if (path === '/api/auth/me') json = { id: 1, uid: 'stop-replay-user', username: '停止验证', role: 'user', department_id: 1 }
-    else if (path === '/api/mention/plugins') json = []
+    else if (path === '/api/mention/resources') json = {}
     else if (path === '/api/agent') json = { agents: [agent] }
     else if (path === `/api/agent/${agentId}`) json = agent
     else if (path.endsWith(`/turns/${turnId}`)) json = turn()

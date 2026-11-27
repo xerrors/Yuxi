@@ -2,7 +2,7 @@
   <div class="agent-panel" :class="{ resizing: isResizing, maximized }">
     <div
       v-if="!maximized"
-      class="resize-handle"
+      class="resize-divider"
       role="separator"
       tabindex="0"
       aria-label="调整侧边栏宽度"
@@ -40,11 +40,8 @@
             @click="activateSection(section)"
             @keydown="handleTabKey($event, section)"
           >
-            <Folders v-if="section.type === 'file-tree'" :size="15" />
-            <FileTypeIcon v-else-if="section.type === 'file'" :name="section.path" :size="15" />
-            <Bug v-else-if="section.type === 'message-debug'" :size="15" />
-            <Workflow v-else-if="section.type === 'cooperation'" :size="15" />
-            <BookOpen v-else-if="section.type === 'turn-sources'" :size="15" />
+            <FileTypeIcon v-if="section.type === 'file'" :name="section.path" :size="15" />
+            <component v-else-if="sectionIcons[section.type]" :is="sectionIcons[section.type]" :size="15" />
             <FallbackAvatar
               v-else
               :src="section.avatar"
@@ -71,6 +68,16 @@
           </button>
         </div>
       </div>
+      <button
+        v-if="!hasStartSection"
+        type="button"
+        class="header-action-btn add-section-btn"
+        title="新建开始页"
+        aria-label="新建开始页"
+        @click="openStart"
+      >
+        <Plus :size="16" />
+      </button>
       <div class="window-actions">
         <slot name="window-actions"></slot>
         <button
@@ -96,57 +103,62 @@
 
     <div class="tab-content" :id="tabPanelId" role="tabpanel" :aria-labelledby="activeTabId">
       <slot name="session-content"></slot>
-      <div v-show="activeSectionKey === 'file-tree'" class="tree-pane">
+      <div v-if="activeSection?.type === 'start'" class="panel-start">
+        <div class="panel-start-actions">
+          <Compass class="panel-start-icon" :size="36" aria-hidden="true" />
+          <button
+            v-for="section in startSections"
+            :key="section.key"
+            type="button"
+            class="panel-start-action"
+            @click="openStartSection(section)"
+          >
+            <component :is="sectionIcons[section.type]" :size="18" aria-hidden="true" />
+            <span>{{ section.title }}</span>
+          </button>
+        </div>
+      </div>
+      <section v-show="activeSection?.type === 'file-tree'" class="tree-pane" aria-label="工作区文件">
         <div class="tree-toolbar">
-          <div class="tree-scope-tabs" role="tablist" aria-label="文件树目录">
-            <template v-for="(scope, index) in treeScopes" :key="scope.key">
-              <span v-if="index > 0" class="tree-scope-separator" aria-hidden="true"></span>
-              <button
-                type="button"
-                class="tree-scope-tab"
-                :class="{ active: activeTreeScope === scope.key }"
-                role="tab"
-                :aria-selected="activeTreeScope === scope.key"
-                @click="setTreeScope(scope.key)"
-              >
-                {{ scope.label }}
-              </button>
-            </template>
-          </div>
+          <span class="tree-title">项目文件夹</span>
           <div class="tree-toolbar-actions">
             <button
+              type="button"
               class="header-action-btn"
-              :title="activeTreeScope === 'workspace' ? '搜索个人空间' : '搜索对话目录'"
-              :aria-label="activeTreeScope === 'workspace' ? '搜索个人空间' : '搜索对话目录'"
-              :disabled="activeTreeScope === 'thread' && !threadId"
-              @click="fileSearchOpen = true"
+              title="搜索项目文件夹"
+              aria-label="搜索项目文件夹"
+              :disabled="!threadId"
+              @click="openFileSearch('thread')"
             >
               <Search :size="15" />
             </button>
             <button
+              type="button"
               class="header-action-btn"
-              :title="activeTreeScope === 'workspace' ? '刷新个人空间' : '刷新文件'"
-              :aria-label="activeTreeScope === 'workspace' ? '刷新个人空间' : '刷新文件'"
-              @click="emitRefresh"
+              title="刷新项目文件夹"
+              aria-label="刷新项目文件夹"
+              :disabled="!threadId"
+              @click="refreshTree('thread')"
             >
               <RefreshCw :size="15" />
             </button>
           </div>
         </div>
-        <div v-show="activeTreeScope === 'thread'" class="tree-scope-pane">
-          <div v-if="!threadId" class="empty">创建对话后可查看对话目录</div>
-          <div v-else-if="loadingFiles" class="empty">正在加载文件系统...</div>
+        <div class="tree-scope-pane">
+          <div v-if="!threadId" class="empty">创建对话后可查看项目文件夹</div>
+          <div v-else-if="loadingFiles || (!filesystemLoaded && !filesystemError)" class="empty" role="status">正在加载文件系统...</div>
           <div v-else-if="filesystemError" class="empty error-state">
             <div>{{ filesystemError }}</div>
             <a-button type="link" size="small" @click="refreshFileSystem">重试</a-button>
           </div>
-          <div v-else-if="!fileTreeData.length" class="empty">当前对话目录为空</div>
+          <div v-else-if="!fileTreeData.length" class="empty">项目文件夹为空</div>
           <div v-else class="file-tree-container">
             <FileTreeComponent
               v-model:selectedKeys="selectedKeys"
               v-model:expandedKeys="expandedKeys"
               :tree-data="fileTreeData"
               :load-data="loadData"
+              compact
               @select="onFileSelect"
             >
               <template #title="{ node }">
@@ -164,7 +176,7 @@
                     title="下载文件"
                     aria-label="下载文件"
                   >
-                    <Download :size="14" />
+                    <Download :size="13" />
                   </button>
                   <button
                     class="tree-action-btn tree-delete-btn"
@@ -173,18 +185,43 @@
                     :title="node.isLeaf ? '删除文件' : '删除文件夹'"
                     :aria-label="node.isLeaf ? '删除文件' : '删除文件夹'"
                   >
-                    <Trash2 :size="14" />
+                    <Trash2 :size="13" />
                   </button>
                 </div>
               </template>
             </FileTreeComponent>
           </div>
         </div>
-        <div v-show="activeTreeScope === 'workspace'" class="tree-scope-pane">
-          <div v-if="workspaceLoading" class="empty">正在加载个人空间...</div>
+      </section>
+      <section v-show="activeSection?.type === 'workspace-tree'" class="tree-pane" aria-label="个人空间文件">
+        <div class="tree-toolbar">
+          <span class="tree-title">个人空间</span>
+          <div class="tree-toolbar-actions">
+            <button
+              type="button"
+              class="header-action-btn"
+              title="搜索个人空间"
+              aria-label="搜索个人空间"
+              @click="openFileSearch('workspace')"
+            >
+              <Search :size="15" />
+            </button>
+            <button
+              type="button"
+              class="header-action-btn"
+              title="刷新个人空间"
+              aria-label="刷新个人空间"
+              @click="refreshTree('workspace')"
+            >
+              <RefreshCw :size="15" />
+            </button>
+          </div>
+        </div>
+        <div class="tree-scope-pane">
+          <div v-if="workspaceLoading && !workspaceTreeData.length" class="empty">正在加载个人空间...</div>
           <div v-else-if="workspaceError" class="empty error-state">
             <div>{{ workspaceError }}</div>
-            <a-button type="link" size="small" @click="refreshWorkspaceTree({ force: true })">
+            <a-button type="link" size="small" @click="refreshWorkspaceTree()">
               重试
             </a-button>
           </div>
@@ -195,6 +232,7 @@
               v-model:expandedKeys="workspaceExpandedKeys"
               :tree-data="workspaceTreeData"
               :load-data="loadWorkspaceData"
+              compact
               @select="onWorkspaceFileSelect"
             >
               <template #title="{ node }">
@@ -212,14 +250,14 @@
                     title="下载文件"
                     aria-label="下载文件"
                   >
-                    <Download :size="14" />
+                    <Download :size="13" />
                   </button>
                 </div>
               </template>
             </FileTreeComponent>
           </div>
         </div>
-      </div>
+      </section>
       <div v-show="activeSection?.type === 'file'" class="preview-pane">
         <AgentFilePreview
           v-if="currentFile"
@@ -232,7 +270,6 @@
           :borderless="true"
           :showClose="false"
           :showDownload="true"
-          :showFullscreen="true"
           @download="downloadFile(activePreviewTab)"
         />
         <div v-else class="preview-empty">正在加载文件内容...</div>
@@ -268,7 +305,7 @@
       default-mode="file"
       :file-search="searchActiveTreeFiles"
       :file-placeholder="fileSearchPlaceholder"
-      :file-scope-hint="activeTreeScope === 'workspace' ? '仅搜索个人空间，不包含知识库文件。' : '仅搜索当前对话或关联项目的工作目录。'"
+      :file-scope-hint="fileSearchScope === 'workspace' ? '仅搜索个人空间，不包含知识库文件。' : '仅搜索当前对话或关联项目的工作目录。'"
       @select-file="handleSearchSelect"
     />
   </div>
@@ -294,11 +331,14 @@ import {
 import {
   BookOpen,
   Bug,
+  Compass,
   Download,
+  Folder,
   Folders,
   Maximize2,
   Minimize2,
   PanelRight,
+  Plus,
   RefreshCw,
   Search,
   Trash2,
@@ -374,11 +414,9 @@ const props = defineProps({
     default: () => new Map()
   },
   maximized: { type: Boolean, default: false },
-  sections: {
-    type: Array,
-    default: () => [{ key: 'file-tree', type: 'file-tree', title: '文件' }]
-  },
-  activeSectionKey: { type: String, default: 'file-tree' },
+  sections: { type: Array, default: () => [] },
+  startSections: { type: Array, default: () => [] },
+  activeSectionKey: { type: String, default: '' },
   filesystemVisible: { type: Boolean, default: false },
   filesystemPollingActive: { type: Boolean, default: false },
   filesystemRefreshVersions: { type: Map, default: () => new Map() }
@@ -394,11 +432,14 @@ const emit = defineEmits([
   'close-preview-path',
   'toggle-maximize',
   'activate-section',
+  'open-start',
+  'open-start-section',
   'close-section'
 ])
 const currentFile = ref(null)
 const currentFilePath = ref('')
 const loadingFiles = ref(false)
+const filesystemLoaded = ref(false)
 const filesystemError = ref('')
 
 const dynamicTreeData = ref([])
@@ -406,20 +447,22 @@ const selectedKeys = ref([])
 const expandedKeys = ref([])
 const deletingPaths = ref(new Set())
 
-// 个人空间（个人 workspace）树：与对话目录相互独立、切换保活。
-const treeScopes = [
-  { key: 'workspace', label: '个人空间' },
-  { key: 'thread', label: '对话目录' }
-]
-const activeTreeScope = ref('workspace')
 const workspaceTreeData = ref([])
 const workspaceSelectedKeys = ref([])
 const workspaceExpandedKeys = ref([])
 const workspaceLoading = ref(false)
 const workspaceError = ref('')
-const workspaceLoaded = ref(false)
 const isResizing = ref(false)
 const fileSearchOpen = ref(false)
+const fileSearchScope = ref('thread')
+const sectionIcons = {
+  start: Compass,
+  'file-tree': Folder,
+  'workspace-tree': Folders,
+  'message-debug': Bug,
+  cooperation: Workflow,
+  'turn-sources': BookOpen
+}
 const sectionTabsRef = ref(null)
 const tabPanelId = `agent-panel-${getCurrentInstance().uid}`
 const normalizedSections = computed(() =>
@@ -438,6 +481,8 @@ const hasMessageDebugSection = computed(() =>
 const activeSection = computed(
   () => normalizedSections.value.find((section) => section.key === props.activeSectionKey) || null
 )
+const hasStartSection = computed(() => normalizedSections.value.some((section) => section.type === 'start'))
+const workspaceTreeVisible = computed(() => props.visible && activeSection.value?.type === 'workspace-tree')
 const turnSourcesSection = computed(() => activeSection.value?.type === 'turn-sources' ? activeSection.value : null)
 
 /** 用户切回已有的个人文件标签时也算一次访问；恢复面板由被动读取处理。 */
@@ -469,11 +514,27 @@ const handleTabKey = (event, section) => {
   }
 }
 
-const canCloseTab = (section) => section.type !== 'file-tree' && section.type !== 'main-session'
-const closeTab = async (section) => {
-  emit('close-section', section.key)
+const canCloseTab = (section) => section.type !== 'main-session' && (
+  section.type !== 'start' ||
+  normalizedSections.value.some((item) => item.type !== 'start' && item.type !== 'main-session')
+)
+
+/** 入口和关闭操作更新标签后，将焦点交给当前标签。 */
+const focusActiveTab = async () => {
   await nextTick()
   sectionTabsRef.value?.querySelector('[role="tab"][aria-selected="true"]')?.focus()
+}
+const closeTab = (section) => {
+  emit('close-section', section.key)
+  void focusActiveTab()
+}
+const openStart = () => {
+  emit('open-start')
+  void focusActiveTab()
+}
+const openStartSection = (section) => {
+  emit('open-start-section', section)
+  void focusActiveTab()
 }
 
 const ensureActiveSectionVisible = async () => {
@@ -489,11 +550,16 @@ const PREFETCH_DIRECTORY_NAMES = ['outputs', 'uploads']
 const HIDE_WHEN_EMPTY_NAMES = ['outputs', 'uploads']
 
 const fileSearchPlaceholder = computed(() =>
-  activeTreeScope.value === 'workspace' ? '搜索个人空间的文件...' : '搜索当前对话的文件...'
+  fileSearchScope.value === 'workspace' ? '搜索个人空间的文件...' : '搜索项目文件夹的文件...'
 )
 
+const openFileSearch = (scope) => {
+  fileSearchScope.value = scope
+  fileSearchOpen.value = true
+}
+
 const searchActiveTreeFiles = (query) =>
-  activeTreeScope.value === 'workspace'
+  fileSearchScope.value === 'workspace'
     ? searchWorkspaceFiles(query)
     : searchViewerFiles(props.threadId, query)
 
@@ -506,7 +572,7 @@ const openPersonalFile = (entry) => {
 
 const handleSearchSelect = (entry) => {
   if (!entry?.path) return
-  if (activeTreeScope.value === 'workspace') {
+  if (fileSearchScope.value === 'workspace') {
     workspaceSelectedKeys.value = [entry.path]
     openPersonalFile(entry)
     return
@@ -693,6 +759,7 @@ const refreshFileSystem = async ({ silent = false, ensure = false } = {}) => {
         return
       }
       dynamicTreeData.value = nodes
+      filesystemLoaded.value = true
       expandedKeys.value = expandedKeysAfterFilesystemRefresh(expandedKeys.value, { silent })
       const tab = activePreviewTab.value
       selectedKeys.value = tab?.threadId === requestedThreadId && tab.workdir ? [tab.path] : []
@@ -702,6 +769,7 @@ const refreshFileSystem = async ({ silent = false, ensure = false } = {}) => {
       filesystemRefreshGate.canCommit(requestedThreadId, props.threadId)
     ) {
       dynamicTreeData.value = []
+      filesystemLoaded.value = true
     }
   } catch (error) {
     if (
@@ -711,6 +779,7 @@ const refreshFileSystem = async ({ silent = false, ensure = false } = {}) => {
       return
     }
     dynamicTreeData.value = []
+    filesystemLoaded.value = false
     filesystemError.value = error?.message || '加载文件系统失败'
     console.error('Failed to load root files', error)
   } finally {
@@ -750,26 +819,20 @@ const loadWorkspaceChildren = async (directoryPath) => {
 
 let workspaceRefreshInFlight = false
 let workspaceRefreshPending = false
-let workspacePreviewRefreshPending = false
 let workspaceTreeGeneration = 0
 
-const refreshWorkspaceTree = async ({ force = false, refreshPreview = false } = {}) => {
-  if (workspaceLoaded.value && !force && !refreshPreview) return
+const refreshWorkspaceTree = async () => {
   if (workspaceRefreshInFlight) {
-    if (force || refreshPreview) workspaceRefreshPending = true
-    if (refreshPreview) workspacePreviewRefreshPending = true
+    workspaceRefreshPending = true
     return
   }
   workspaceRefreshInFlight = true
   workspaceLoading.value = true
   workspaceError.value = ''
-  workspacePreviewRefreshPending ||= refreshPreview
 
   try {
     do {
       workspaceRefreshPending = false
-      const shouldRefreshPreview = workspacePreviewRefreshPending
-      workspacePreviewRefreshPending = false
 
       workspaceTreeGeneration += 1
       try {
@@ -782,12 +845,7 @@ const refreshWorkspaceTree = async ({ force = false, refreshPreview = false } = 
           )
         }
         workspaceTreeData.value = nodes
-        workspaceLoaded.value = true
-
-        if (shouldRefreshPreview && activePreviewTab.value?.workspace) {
-          releaseFilePreviewCacheEntry(props.previewCache, activePreviewTab.value.key)
-          await loadActivePreview()
-        }
+        workspaceError.value = ''
       } catch (error) {
         workspaceError.value = error?.message || '加载个人空间失败'
         console.error('Failed to load workspace tree', error)
@@ -818,18 +876,6 @@ const onWorkspaceFileSelect = (nextSelectedKeys, { node }) => {
   openPersonalFile(node.fileData)
 }
 
-const setTreeScope = (scope) => {
-  if (activeTreeScope.value === scope) return
-  activeTreeScope.value = scope
-  syncFilesystemRefreshPolling()
-  if (scope === 'workspace') {
-    void refreshWorkspaceTree({ force: workspaceLoaded.value, refreshPreview: true })
-  } else if (scope === 'thread') {
-    // 切到对话目录时立即拉取，避免沿用运行前渲染出的空树。
-    void refreshFileSystem({ silent: true })
-  }
-}
-
 let stopFilesystemPolling = null
 const componentActive = ref(true)
 let previewRequestSeq = 0
@@ -842,11 +888,7 @@ const stopFilesystemRefreshPolling = () => {
 
 const syncFilesystemRefreshPolling = () => {
   stopFilesystemRefreshPolling()
-  if (
-    !componentActive.value ||
-    !props.filesystemPollingActive ||
-    (activeSection.value?.type === 'file-tree' && activeTreeScope.value !== 'thread')
-  ) {
+  if (!componentActive.value || !props.filesystemPollingActive) {
     return
   }
   stopFilesystemPolling = startAgentPanelFilesystemPolling({
@@ -1122,16 +1164,17 @@ const downloadFile = async (fileItem) => {
   }
 }
 
-const emitRefresh = async () => {
+const refreshActivePreview = async () => {
   const preview = activePreviewTab.value
-  if (preview) {
-    releaseFilePreviewCache(props.previewCache, preview.workspace ? 'workspace' : preview.threadId)
-    await loadActivePreview()
-    return
-  }
-  if (activeTreeScope.value === 'workspace') {
+  if (!preview) return refreshTree('thread')
+  releaseFilePreviewCache(props.previewCache, preview.workspace ? 'workspace' : preview.threadId)
+  await loadActivePreview()
+}
+
+const refreshTree = async (scope) => {
+  if (scope === 'workspace') {
     releaseFilePreviewCache(props.previewCache, 'workspace')
-    await refreshWorkspaceTree({ force: true, refreshPreview: true })
+    await refreshWorkspaceTree()
     return
   }
   releaseFilePreviewCache(props.previewCache, props.threadId)
@@ -1210,24 +1253,21 @@ const stopResize = (e) => {
 
 onMounted(() => {
   if (props.filesystemVisible) void refreshFileSystem({ silent: true })
-  syncFilesystemRefreshPolling()
 })
 
 onActivated(() => {
   const wasInactive = !componentActive.value
   componentActive.value = true
   if (wasInactive && props.visible && activeSection.value?.type === 'file') {
-    void emitRefresh()
-  } else if (wasInactive && props.filesystemVisible && activeTreeScope.value === 'workspace') {
-    void refreshWorkspaceTree({ force: true, refreshPreview: true })
-  } else if (wasInactive && props.filesystemVisible) {
-    void refreshFileSystem({ silent: true })
+    void refreshActivePreview()
+  } else if (wasInactive) {
+    if (props.filesystemVisible) void refreshFileSystem({ silent: true })
   }
-  syncFilesystemRefreshPolling()
 })
 
 onDeactivated(() => {
   componentActive.value = false
+  fileSearchOpen.value = false
   stopResize()
   stopFilesystemRefreshPolling()
 })
@@ -1240,9 +1280,11 @@ onUnmounted(() => {
 watch(
   () => props.threadId,
   (threadId) => {
+    if (fileSearchScope.value === 'thread') fileSearchOpen.value = false
     filesystemRefreshGeneration += 1
     previewRequestSeq += 1
     loadingFiles.value = false
+    filesystemLoaded.value = false
     dynamicTreeData.value = []
     expandedKeys.value = []
     selectedKeys.value = []
@@ -1264,11 +1306,21 @@ watch(
   () => props.filesystemVisible,
   (visible) => {
     if (!visible || !componentActive.value) return
-    if (activeTreeScope.value === 'workspace') {
-      void refreshWorkspaceTree({ force: true, refreshPreview: true })
-    } else void refreshFileSystem({ silent: true })
+    void refreshFileSystem({ silent: true })
   }
 )
+
+watch(
+  [workspaceTreeVisible, componentActive, () => props.filesystemRefreshVersions],
+  ([visible, active]) => {
+    if (visible && active) void refreshWorkspaceTree()
+  },
+  { immediate: true }
+)
+
+watch([() => props.visible, () => props.activeSectionKey], () => {
+  fileSearchOpen.value = false
+})
 
 watch(
   () => props.visible,
@@ -1280,7 +1332,7 @@ watch(
   }
 )
 
-watch([() => props.filesystemPollingActive, componentActive], syncFilesystemRefreshPolling)
+watch([() => props.filesystemPollingActive, componentActive], syncFilesystemRefreshPolling, { immediate: true })
 
 watch(
   () => props.filesystemRefreshVersions,
@@ -1294,8 +1346,7 @@ watch(
       if (tab?.workspace && rootChanged) releaseFilePreviewCache(props.previewCache, 'workspace')
       if (tab?.workspace ? rootChanged : changedThreads.includes(tab?.threadId)) void loadActivePreview()
     } else if (rootChanged && props.filesystemVisible) {
-      if (activeTreeScope.value === 'workspace') void refreshWorkspaceTree({ force: true, refreshPreview: true })
-      else void refreshFileSystem({ silent: true, ensure: true })
+      void refreshFileSystem({ silent: true, ensure: true })
     }
   }
 )
@@ -1312,42 +1363,48 @@ watch(
   () => props.activeSectionKey,
   () => {
     void ensureActiveSectionVisible()
-    if (
-      props.activeSectionKey === 'file-tree' &&
-      activeTreeScope.value === 'workspace' &&
-      props.visible &&
-      componentActive.value
-    ) {
-      void refreshWorkspaceTree({ force: true, refreshPreview: true })
-    }
-    syncFilesystemRefreshPolling()
   },
   { immediate: true }
 )
 </script>
 
 <style scoped lang="less">
-.resize-handle {
+.resize-divider {
   position: absolute;
-  left: -2px;
-  top: 50%;
-  transform: translateY(-50%);
-  height: 32px;
-  width: 4px;
+  inset: 0 auto 0 0;
+  width: 8px;
   cursor: col-resize;
-  background: var(--gray-300);
-  border-radius: 2px;
   z-index: 10;
-  transition: background 0.2s;
   touch-action: none;
 
-  &:hover,
-  &:focus-visible {
-    background: var(--main-400);
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 1px;
+    background: var(--gray-150);
+    transition: width 140ms ease, background-color 140ms ease;
   }
+
+  &:hover::before,
+  &:focus-visible::before,
+  .agent-panel.resizing > &::before {
+    width: 3px;
+    background: var(--gray-400);
+  }
+
   &:focus-visible {
-    outline: 2px solid var(--main-400);
-    outline-offset: 2px;
+    outline: none;
+
+    &::before {
+      background: var(--gray-600);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .resize-divider::before {
+    transition: none;
   }
 }
 
@@ -1359,11 +1416,6 @@ watch(
   flex-direction: column;
   position: relative;
   background: var(--gray-0);
-  transition: none;
-
-  &.resizing {
-    transition: none;
-  }
 
   .panel-header {
     border-bottom: 1px solid var(--gray-100);
@@ -1382,11 +1434,10 @@ watch(
 .panel-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   padding: 4px 12px;
   min-height: var(--header-height);
-  background: var(--gray-50);
+  background: var(--gray-0);
   border-bottom: 1px solid var(--gray-100);
   flex-shrink: 0;
 }
@@ -1425,7 +1476,6 @@ watch(
 
 .section-tabs {
   display: flex;
-  flex: 1;
   min-width: 0;
   align-items: center;
   gap: 4px;
@@ -1466,11 +1516,11 @@ watch(
   }
 
   &:hover {
-    background: var(--gray-100);
+    background: var(--gray-50);
   }
 
   &.active {
-    background: var(--gray-0);
+    background: var(--gray-100);
     color: var(--gray-900);
   }
 
@@ -1571,7 +1621,12 @@ watch(
   }
 }
 
+.add-section-btn {
+  flex-shrink: 0;
+}
+
 .window-actions {
+  margin-inline-start: auto;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -1620,65 +1675,83 @@ watch(
   overflow: hidden;
 }
 
-.tree-pane {
+.panel-start {
   flex: 1;
-  width: 100%;
-  height: 100%;
   min-width: 0;
   min-height: 0;
   display: flex;
-  flex-direction: column;
-  padding: 0 6px 6px;
+  align-items: flex-start;
+  overflow: auto;
+  padding: clamp(16px, 15vh, 160px) 16px 16px;
 }
 
-.tree-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex: 0 0 36px;
+.panel-start-actions {
+  display: grid;
   gap: 8px;
-  padding: 4px 4px 4px 8px;
-  border-bottom: 1px solid var(--gray-100);
-  color: var(--gray-700);
-  font-size: 12px;
+  width: min(100%, 320px);
+  margin: 0 auto;
 }
 
-.tree-scope-tabs {
+.panel-start-icon {
+  margin: 0 auto 12px;
+  color: var(--gray-500);
+}
+
+.panel-start-action {
   display: flex;
   align-items: center;
-}
-
-.tree-scope-separator {
-  width: 1px;
-  height: 10px;
-  margin: 0 8px;
-  background: var(--gray-200);
-}
-
-.tree-scope-tab {
-  border: 0;
-  background: transparent;
-  color: var(--gray-500);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 16px;
-  padding: 0;
+  gap: 12px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--gray-150);
+  border-radius: 8px;
+  background: var(--gray-0);
+  color: var(--gray-900);
+  font-size: 14px;
+  text-align: left;
   cursor: pointer;
-  white-space: nowrap;
 
-  &:hover {
-    color: var(--gray-900);
+  > svg {
+    flex-shrink: 0;
+    color: var(--gray-600);
   }
 
-  &.active {
-    color: var(--main-600);
-    font-weight: 700;
+  &:hover {
+    background: var(--gray-50);
+    border-color: var(--gray-200);
   }
 
   &:focus-visible {
     outline: 2px solid var(--main-300);
     outline-offset: 1px;
   }
+}
+
+.tree-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 6px;
+  overflow: hidden;
+}
+
+.tree-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 4px 4px 4px 8px;
+  border-bottom: 1px solid var(--gray-100);
+}
+
+.tree-title {
+  color: var(--gray-700);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .tree-scope-pane {
@@ -1690,15 +1763,9 @@ watch(
 
 .tree-toolbar-actions {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 2px;
-}
-
-.files-display.has-preview.with-tree .tree-pane {
-  flex: 0 0 34%;
-  min-width: 260px;
-  max-width: 380px;
-  border-left: 1px solid var(--gray-100);
 }
 
 .preview-tabs-bar {
@@ -1894,7 +1961,7 @@ watch(
   min-width: 0;
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--gray-800);
 }
 

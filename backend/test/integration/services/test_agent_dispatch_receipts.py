@@ -41,7 +41,6 @@ def publication(sessions, monkeypatch):
 
     monkeypatch.setattr(scheduler, "deliver", deliver)
     monkeypatch.setattr(threads, "deliver", deliver)
-    monkeypatch.setattr(scheduler, "ensure_bound_user_workdir", lambda *_args: None)
     monkeypatch.setattr("yuxi.modules.agents.services.transport.enqueue_agent_run", enqueue)
     return state
 

@@ -24,7 +24,12 @@ test('字符串交付物倒序展示为文件项并按展开状态截断', () =>
     { path: '/a.md', name: 'a.md' },
     { path: '/image.png', name: 'image.png' }
   ])
-  assert.deepEqual(visibleArtifactItems(items, false), items.slice(0, 3))
-  assert.deepEqual(visibleArtifactItems(items, true), items)
-  assert.deepEqual(buildArtifactItems([]), [])
+  assert.deepEqual(visibleArtifactItems(items, false), items)
+  const extendedItems = [...items, { path: '/report.html', name: 'report.html' }]
+  assert.deepEqual(visibleArtifactItems(extendedItems, false), extendedItems.slice(0, 4))
+  assert.deepEqual(visibleArtifactItems(extendedItems, true), extendedItems)
+  const overflowingItems = [...extendedItems, { path: '/roadmap.pdf', name: 'roadmap.pdf' }]
+  assert.deepEqual(visibleArtifactItems(overflowingItems, false), extendedItems.slice(0, 4))
+  assert.deepEqual(visibleArtifactItems(overflowingItems, true), overflowingItems)
+  assert.deepEqual(visibleArtifactItems(buildArtifactItems([]), false), [])
 })

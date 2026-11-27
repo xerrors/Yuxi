@@ -392,6 +392,7 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
   })
   const queue = useAgentInputQueue({
     getThreadState,
+    isCurrentThreadState,
     isThreadActive: (threadId) => observers.has(threadId),
     onInputConsumed: (threadId) => resumeActiveRunForThread(threadId, { fresh: true })
   })

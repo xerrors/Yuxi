@@ -25,7 +25,7 @@
         class="lucide-icon-btn control-button"
         title="继续队列"
         aria-label="继续队列"
-        :disabled="hasActiveTurns || controlling || !currentId"
+        :disabled="hasActiveTurns || controlling || !currentId || continueDisabled"
         :aria-busy="controlling"
         @click="control(false)"
       >
@@ -110,9 +110,10 @@ const props = defineProps({
   sessions: { type: Array, default: () => [] },
   currentId: { type: String, default: '' },
   error: { type: String, default: '' },
-  compact: { type: Boolean, default: false }
+  compact: { type: Boolean, default: false },
+  continueDisabled: { type: Boolean, default: false }
 })
-const emit = defineEmits(['open', 'open-tree', 'refresh'])
+const emit = defineEmits(['open', 'open-tree', 'refresh', 'control-error'])
 const states = {
   approval: { label: '等待审批', tone: 'attention' },
   answer: { label: '等待回答', tone: 'attention' },
@@ -187,16 +188,18 @@ const summaryText = computed(() => {
     .join(' · ')
 })
 const control = async (stopped) => {
-  if (controlling.value || !props.currentId) return
+  const threadId = props.currentId
+  if (controlling.value || !threadId || (!stopped && props.continueDisabled)) return
   controlling.value = true
   try {
     const key =
       typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
         ? crypto.randomUUID()
         : `tree-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-    await agentApi.controlSessionTree(props.currentId, stopped, key)
+    await agentApi.controlSessionTree(threadId, stopped, key)
     emit('refresh')
   } catch (failure) {
+    if (!stopped) emit('control-error', threadId, failure)
     message.error(failure.message || '协作树控制失败')
   } finally {
     controlling.value = false

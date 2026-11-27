@@ -17,10 +17,10 @@ from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.errors import FileTransferLimitError
 from yuxi.modules.workspace.filesystem import Workspace
 from yuxi.modules.workspace.paths import ensure_user_workspace, normalize_workspace_scope, validate_directory_name
-from yuxi.modules.workspace.repositories.projects import ProjectRepository
 from yuxi.modules.workspace.repositories.recent_files import recent_file_opens, record_file_open
 from yuxi.modules.workspace.runtime_paths import is_conversation_archive_path, runtime_workspace_path
 from yuxi.modules.workspace.services.file_entries import file_entry, sort_file_entries
+from yuxi.modules.workspace.services.quota import require_upload_capacity
 from yuxi.shared.errors import (
     ContentTooLargeError,
     DomainError,
@@ -227,15 +227,8 @@ async def write_workspace_file_content(*, path: str, content: str, current_user:
     }
 
 
-async def delete_workspace_path(*, path: str, current_user: User, db) -> dict:
-    """删除工作区内的文件或目录，根目录不可删除。
-
-    目标是仍被会话引用的 Project Workdir（或其祖先目录）时拒绝整次删除：
-    递归删除会清空会话文件而 Project 绑定与 Session 引用仍然存活，会话
-    随即指向不存在的目录；已删除会话（status=deleted）或已软删 Project
-    的    残留目录不再阻塞。判断只依据引用路径的祖先关系。Workdir 内普通文件仍可删除。
-    outputs/conversation_history 与 outputs/large_tool_results 及其内容是会话压缩留档，拒绝删除。
-    """
+async def delete_workspace_path(*, path: str, current_user: User) -> dict:
+    """删除工作区内的文件或目录，保护工作区根和直接访问的会话压缩留档。"""
     backend = _workspace_backend(current_user)
     workspace_path = _workspace_path(path)
     if workspace_path == WORKSPACE_SCOPE_ROOT:
@@ -244,14 +237,6 @@ async def delete_workspace_path(*, path: str, current_user: User, db) -> dict:
         raise InvalidOperationError(
             "该路径是会话压缩留档，删除后无法恢复本会话的历史摘要",
             code="conversation_archive_protected",
-        )
-
-    target = PurePosixPath(str(workspace_path).strip("/"))
-    referenced = await ProjectRepository(db).list_referenced_workdir_paths_for_user(str(current_user.uid))
-    if any(target == PurePosixPath(item) or target in PurePosixPath(item).parents for item in referenced):
-        raise InvalidOperationError(
-            "该目录包含会话正在使用的工作目录，整体删除会清空会话文件；请先删除相关会话或项目",
-            code="workspace_session_workdir_protected",
         )
 
     try:
@@ -298,6 +283,7 @@ async def upload_workspace_files(
     files: list[FileInput],
     relative_paths: list[str] | None = None,
     current_user: User,
+    db: AsyncSession,
 ) -> dict:
     """把借用的文件流写入用户工作区，失败时撤销本批次已写入文件。"""
     if not files:
@@ -307,6 +293,7 @@ async def upload_workspace_files(
     if relative_paths is not None and len(relative_paths) != len(files):
         raise InvalidInputError("相对路径数量与文件数量不一致")
 
+    await require_upload_capacity(db, str(current_user.uid))
     backend = _workspace_backend(current_user)
     parent = _workspace_path(parent_path)
     try:

@@ -2,18 +2,20 @@
   <section
     v-if="normalizedArtifacts.length"
     class="artifacts-list"
-    :class="{ 'is-box-group': normalizedArtifacts.length > 3 }"
+    :class="{ 'is-box-group': hiddenArtifactCount > 0 }"
     aria-label="交付物"
   >
-    <div v-if="normalizedArtifacts.length > 3" class="artifacts-heading">
-      <span>交付物 <span class="artifact-count">{{ normalizedArtifacts.length }}</span></span>
+    <div v-if="hiddenArtifactCount > 0" class="artifacts-heading">
+      <span
+        >交付物 <span class="artifact-count">{{ normalizedArtifacts.length }}</span></span
+      >
       <button
         type="button"
         class="lucide-icon-btn artifacts-toggle"
         :aria-expanded="expanded"
         @click="expanded = !expanded"
       >
-        {{ expanded ? '收起' : `展开其余 ${normalizedArtifacts.length - 3} 个` }}
+        {{ expanded ? '收起' : `展开其余 ${hiddenArtifactCount} 个` }}
         <ChevronDown :size="14" :class="{ 'is-expanded': expanded }" aria-hidden="true" />
       </button>
     </div>
@@ -27,26 +29,52 @@
             @click="openPreview(file)"
           >
             <FileTypeIcon :name="file.path" :size="20" class="item-icon" />
-            <div class="item-meta">
-              <div class="item-name">{{ file.name }}</div>
-              <div class="item-desc">{{ getFileMetaLabel(file.path) }}</div>
-            </div>
+            <span class="item-name">{{ file.name }}</span>
           </button>
-          <div class="item-actions">
-            <button class="item-action-btn" title="下载" aria-label="下载" @click.stop="downloadFile(file)">
-              <Download :size="15" />
-            </button>
-            <button
-              class="item-action-btn"
-              :title="isSaving(file.path) ? '保存中' : '保存到个人空间'"
-              aria-label="保存到个人空间"
-              :disabled="isSaving(file.path)"
-              @click.stop="saveToWorkspace(file)"
-            >
-              <LoaderCircle v-if="isSaving(file.path)" :size="15" class="item-action-spin" />
-              <Save v-else :size="15" />
-            </button>
-          </div>
+          <ActionDropdown
+            :open="openActionPath === file.path"
+            align="end"
+            :width="168"
+            @update:open="openActionPath = $event ? file.path : null"
+          >
+            <template #trigger="{ open }">
+              <button
+                type="button"
+                class="item-action-btn"
+                title="更多操作"
+                :aria-label="`更多操作：${file.name}`"
+                aria-haspopup="menu"
+                :aria-expanded="open"
+                @keydown.down.prevent="$event.currentTarget.click()"
+              >
+                <Ellipsis :size="18" aria-hidden="true" />
+              </button>
+            </template>
+            <template #default="{ closeAndFocus }">
+              <div
+                role="menu"
+                :aria-label="`更多操作：${file.name}`"
+                @keydown.up.prevent="moveActionFocus"
+                @keydown.down.prevent="moveActionFocus"
+                @keydown.tab="closeAndFocus"
+              >
+                <button type="button" role="menuitem" class="config-dropdown-item artifact-menu-item" @click="closeAndFocus(); downloadFile(file)">
+                  <Download :size="14" aria-hidden="true" />
+                  下载
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="config-dropdown-item artifact-menu-item"
+                  :disabled="isSaving(file.path)"
+                  @click="closeAndFocus(); saveToWorkspace(file)"
+                >
+                  <Save :size="14" aria-hidden="true" />
+                  {{ isSaving(file.path) ? '保存中' : '保存到个人空间' }}
+                </button>
+              </div>
+            </template>
+          </ActionDropdown>
         </div>
       </div>
     </TransitionGroup>
@@ -80,8 +108,9 @@ import {
   visibleArtifactItems
 } from '@/modules/session/model/artifactPresentation'
 import { message } from 'ant-design-vue'
-import { ChevronDown, Download, LoaderCircle, Save } from '@lucide/vue'
+import { ChevronDown, Download, Ellipsis, Save } from '@lucide/vue'
 import { threadApi } from '@/apis/agent_api'
+import ActionDropdown from '@/shared/ui/ActionDropdown.vue'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
 import WorkspacePathPicker from '@/modules/workspace/ui/WorkspacePathPicker.vue'
 import { parseDownloadFilename } from '@/shared/lib/file_utils'
@@ -100,8 +129,13 @@ const emit = defineEmits(['saved', 'open-preview'])
 
 const normalizedArtifacts = computed(() => buildArtifactItems(props.artifacts))
 const expanded = ref(false)
+const openActionPath = ref(null)
+const collapsedArtifacts = computed(() => visibleArtifactItems(normalizedArtifacts.value, false))
+const hiddenArtifactCount = computed(
+  () => normalizedArtifacts.value.length - collapsedArtifacts.value.length
+)
 const visibleArtifacts = computed(() =>
-  visibleArtifactItems(normalizedArtifacts.value, expanded.value)
+  expanded.value ? normalizedArtifacts.value : collapsedArtifacts.value
 )
 const savingState = ref({})
 const saveDialogOpen = ref(false)
@@ -109,15 +143,12 @@ const pendingSaveFile = ref(null)
 const selectedDestination = ref('/saved_artifacts')
 const pickerLoading = ref(false)
 
-const getFileMetaLabel = (path) => {
-  const filename =
-    String(path || '')
-      .split('/')
-      .pop() || ''
-  if (!filename.includes('.')) return '交付文件'
-
-  const extension = filename.split('.').pop()
-  return extension ? `交付文件 · ${extension.toUpperCase()}` : '交付文件'
+/** 上下键在可用的交付物菜单项间循环。 */
+const moveActionFocus = (event) => {
+  const items = [...event.currentTarget.querySelectorAll('button:not(:disabled)')]
+  const direction = event.key === 'ArrowDown' ? 1 : -1
+  const next = (items.indexOf(event.target) + direction + items.length) % items.length
+  items[next]?.focus()
 }
 
 const openPreview = (file) => {
@@ -209,26 +240,10 @@ const confirmSave = async () => {
 }
 
 .artifacts-list.is-box-group {
-  gap: 0;
-  border: 1px solid var(--gray-150);
-  border-radius: 10px;
-  overflow: hidden;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 12px;
   background: var(--gray-25);
-
-  .artifact-items {
-    gap: 0;
-  }
-
-  .artifact-card {
-    border: 0;
-    border-top: 1px solid var(--gray-100);
-    border-radius: 0;
-    background: transparent;
-
-    &:hover {
-      background: var(--gray-50);
-    }
-  }
 }
 
 .artifact-items {
@@ -249,7 +264,9 @@ const confirmSave = async () => {
 
 .artifact-reveal-enter-active,
 .artifact-reveal-leave-active {
-  transition: grid-template-rows 0.24s ease, opacity 0.2s ease;
+  transition:
+    grid-template-rows 0.24s ease,
+    opacity 0.2s ease;
 }
 
 .artifact-reveal-enter-from,
@@ -263,7 +280,7 @@ const confirmSave = async () => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 0 4px 4px;
   color: var(--color-text);
   font-size: 13px;
   font-weight: 500;
@@ -312,16 +329,12 @@ const confirmSave = async () => {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  border: 1px solid var(--gray-150);
   border-radius: 12px;
-  background: linear-gradient(180deg, var(--gray-25) 0%, var(--gray-0) 100%);
-  transition:
-    background 0.18s ease,
-    border-color 0.18s ease;
+  background: var(--gray-50);
+  transition: background-color 0.18s ease;
 
   &:hover {
-    border-color: var(--gray-300);
-    background: var(--gray-0);
+    background: var(--gray-100);
   }
 }
 
@@ -339,18 +352,21 @@ const confirmSave = async () => {
   padding: 10px 8px 10px 12px;
 }
 
+.item-main:focus-visible,
+.item-action-btn:focus-visible {
+  outline: 2px solid var(--main-color);
+  outline-offset: -2px;
+}
+
 .item-icon {
   flex-shrink: 0;
   font-size: 18px;
   opacity: 0.86;
 }
 
-.item-meta {
+.item-name {
   min-width: 0;
   flex: 1;
-}
-
-.item-name {
   font-size: 13px;
   font-weight: 600;
   color: var(--gray-900);
@@ -360,23 +376,12 @@ const confirmSave = async () => {
   line-height: 1.3;
 }
 
-.item-desc {
-  margin-top: 2px;
-  font-size: 12px;
-  color: var(--gray-500);
-  line-height: 1.2;
-}
-
-.item-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  margin-right: 8px;
-}
-
 .item-action-btn {
+  flex-shrink: 0;
+  align-self: center;
   width: 30px;
   height: 30px;
+  margin-right: 8px;
   border: none;
   background: transparent;
   color: var(--gray-600);
@@ -385,31 +390,20 @@ const confirmSave = async () => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.18s ease,
+    color 0.18s ease;
 }
 
-.item-action-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.item-action-btn:hover:not(:disabled) {
+.item-action-btn:hover,
+.item-action-btn[aria-expanded="true"] {
   color: var(--main-700);
-  background: var(--gray-100);
+  background: var(--gray-200);
 }
 
-.item-action-spin {
-  animation: artifacts-spin 1s linear infinite;
-}
-
-@keyframes artifacts-spin {
-  from {
-    transform: rotate(0deg);
-  }
-
-  to {
-    transform: rotate(360deg);
-  }
+.artifact-menu-item:focus-visible {
+  outline: 2px solid var(--main-color);
+  outline-offset: -2px;
 }
 
 @media (max-width: 768px) {

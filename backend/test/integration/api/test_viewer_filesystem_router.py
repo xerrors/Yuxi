@@ -53,11 +53,11 @@ async def test_viewer_download_preserves_range_protocol_and_removes_prepared_fil
     monkeypatch.setattr(filesystem, "user_workspace_dir", lambda _uid: workspace_root)
     monkeypatch.setattr(viewer.tempfile, "tempdir", str(transfer_dir))
     monkeypatch.setattr(app, "dependency_overrides", {get_required_user: lambda: user, get_db: object})
-    binding = AuthorizedWorkdir(1, "fixture-thread", user.uid, Workdir.open_existing(user.uid, workdir_path), "viewer-test", "managed")
+    binding = AuthorizedWorkdir(1, "fixture-thread", Workdir.open_existing(user.uid, workdir_path))
 
     async def resolve_workdir(**kwargs):
         """隔离授权绑定，真实 Workdir 仍负责复制。"""
-        assert kwargs["thread_id"] == binding.thread_id and kwargs["uid"] == binding.uid
+        assert kwargs["thread_id"] == binding.thread_id and kwargs["uid"] == user.uid
         return binding
 
     monkeypatch.setattr(viewer, "resolve_authorized_workdir", resolve_workdir)

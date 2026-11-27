@@ -147,8 +147,8 @@ test('慢等待点恢复后才聚焦，隐藏或轮次变化撤销聚焦', async
   const { configureApiAuth } = await server.ssrLoadModule('/src/apis/auth_context.js')
   const originalFetch = globalThis.fetch
   t.mock.method(globalThis, 'fetch', (url, init) => {
-    if (String(url).startsWith('/api/mention/plugins?') && (init?.method || 'GET') === 'GET') {
-      return Promise.resolve(Response.json([]))
+    if (String(url).startsWith('/api/mention/resources?') && (init?.method || 'GET') === 'GET') {
+      return Promise.resolve(Response.json({}))
     }
     return originalFetch(url, init)
   })

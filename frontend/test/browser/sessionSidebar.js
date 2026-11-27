@@ -22,13 +22,13 @@ async page => {
   await page.route('**/api/**', async route => {
     const url = route.request().url()
     const path = url.split('?')[0].replace(origin, '')
-    if (route.request().method() === 'POST' && /\/agents\/sessions(?:\/[^/]+\/events)?$/.test(path)) sessionCreates++
+    if (route.request().method() === 'POST' && (path === '/api/agent/threads' || /\/agents\/sessions\/[^/]+\/events$/.test(path))) sessionCreates++
     let json = { data: [], files: [], skills: [], projects: [], providers: [], config: {} }
     if (path.endsWith('/system/info')) json = { success: true, data: { branding: { name: '语析', logo: '/favicon.svg' } } }
     if (path.endsWith('/system/health')) json = { status: 'ok' }
     if (path.endsWith('/check-first-run')) json = { first_run: false }
     if (path.endsWith('/auth/me')) json = { id: userId, uid: `sidebar-fixture-${userId}`, username: `侧栏验收${userId}`, role: 'superadmin' }
-    if (path === '/api/mention/plugins') json = []
+    if (path === '/api/mention/resources') json = {}
     if (path === '/api/agent') json = { agents: [agent] }
     if (path === '/api/agent/sidebar-agent') json = agent
     if (path === '/api/projects') json = [project]

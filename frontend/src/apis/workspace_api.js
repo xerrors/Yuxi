@@ -1,5 +1,7 @@
 import { apiDelete, apiGet, apiPost, apiPut, buildQuery } from './base'
 
+export const getWorkspaceUsage = (signal) => apiGet('/api/workspace/usage', { signal })
+
 export const getWorkspaceTree = (path = '/', recursive = false, filesOnly = false) => {
   const query = buildQuery({
     path,

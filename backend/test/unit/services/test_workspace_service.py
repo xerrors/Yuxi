@@ -7,6 +7,7 @@ from io import BytesIO
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -19,18 +20,14 @@ from yuxi.shared.errors import DomainError, InvalidInputError, InvalidOperationE
 from yuxi.shared.files import FileInput
 
 
+@pytest.fixture
+def workspace_db():
+    """为文件上传提供尚无用量快照的数据库。"""
+    return SimpleNamespace(get=AsyncMock(return_value=None))
+
+
 def _user() -> SimpleNamespace:
     return SimpleNamespace(id="db-id-1", uid="user-1")
-
-
-class _Referenced:
-    """按注入路径列表响应删除保护查询的 ProjectRepository 替身。"""
-
-    def __init__(self, paths: list[str]) -> None:
-        self._paths = paths
-
-    async def list_referenced_workdir_paths_for_user(self, uid: str) -> list[str]:
-        return list(self._paths)
 
 
 def _workspace_root(user: SimpleNamespace) -> Path:
@@ -274,7 +271,7 @@ async def test_write_workspace_file_content_blocks_path_traversal(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_upload_workspace_files_writes_files(tmp_path: Path, monkeypatch) -> None:
+async def test_upload_workspace_files_writes_files(tmp_path: Path, monkeypatch, workspace_db) -> None:
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
     root = _workspace_root(user)
@@ -285,7 +282,7 @@ async def test_upload_workspace_files_writes_files(tmp_path: Path, monkeypatch) 
 
     previous_umask = os.umask(0o077)
     try:
-        result = await svc.upload_workspace_files(parent_path="/", files=uploads, current_user=user)
+        result = await svc.upload_workspace_files(parent_path="/", files=uploads, current_user=user, db=workspace_db)
     finally:
         os.umask(previous_umask)
 
@@ -321,6 +318,7 @@ async def test_create_workspace_directory_uses_owner_only_mode(tmp_path: Path, m
 async def test_upload_workspace_files_rejects_oversized_file_and_cleans_partial_files(
     tmp_path: Path,
     monkeypatch,
+    workspace_db,
 ) -> None:
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     monkeypatch.setattr(svc, "MAX_WORKSPACE_UPLOAD_SIZE_BYTES", 5)
@@ -332,7 +330,7 @@ async def test_upload_workspace_files_rejects_oversized_file_and_cleans_partial_
     ]
 
     with pytest.raises(DomainError) as exc_info:
-        await svc.upload_workspace_files(parent_path="/", files=uploads, current_user=user)
+        await svc.upload_workspace_files(parent_path="/", files=uploads, current_user=user, db=workspace_db)
 
     assert isinstance(exc_info.value, InvalidOperationError)
     assert "100 MB" in exc_info.value.message
@@ -341,20 +339,20 @@ async def test_upload_workspace_files_rejects_oversized_file_and_cleans_partial_
 
 
 @pytest.mark.asyncio
-async def test_upload_workspace_files_rejects_more_than_limit(tmp_path: Path, monkeypatch) -> None:
+async def test_upload_workspace_files_rejects_more_than_limit(tmp_path: Path, monkeypatch, workspace_db) -> None:
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
     uploads = [FileInput(filename=f"demo-{index}.txt", source=BytesIO(b"hello")) for index in range(svc.MAX_WORKSPACE_UPLOAD_FILES + 1)]
 
     with pytest.raises(DomainError) as exc_info:
-        await svc.upload_workspace_files(parent_path="/", files=uploads, current_user=user)
+        await svc.upload_workspace_files(parent_path="/", files=uploads, current_user=user, db=workspace_db)
 
     assert isinstance(exc_info.value, InvalidOperationError)
     assert f"一次最多上传 {svc.MAX_WORKSPACE_UPLOAD_FILES} 个文件" in exc_info.value.message
 
 
 @pytest.mark.asyncio
-async def test_upload_workspace_files_preserves_relative_paths(tmp_path: Path, monkeypatch) -> None:
+async def test_upload_workspace_files_preserves_relative_paths(tmp_path: Path, monkeypatch, workspace_db) -> None:
     """文件夹上传按相对路径创建目录并保留文件内容。"""
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
@@ -370,6 +368,7 @@ async def test_upload_workspace_files_preserves_relative_paths(tmp_path: Path, m
         files=uploads,
         relative_paths=["root/a.txt", "root/sub/b.txt", "root/sub/c.txt"],
         current_user=user,
+        db=workspace_db,
     )
 
     assert [entry["path"] for entry in result["entries"]] == ["/root/a.txt", "/root/sub/b.txt", "/root/sub/c.txt"]
@@ -379,7 +378,7 @@ async def test_upload_workspace_files_preserves_relative_paths(tmp_path: Path, m
 
 
 @pytest.mark.asyncio
-async def test_folder_upload_preserves_leading_space_in_root_name(tmp_path: Path, monkeypatch) -> None:
+async def test_folder_upload_preserves_leading_space_in_root_name(tmp_path: Path, monkeypatch, workspace_db) -> None:
     """目录名前导空白属于名称，不能静默上传到另一个目录。"""
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
@@ -390,6 +389,7 @@ async def test_folder_upload_preserves_leading_space_in_root_name(tmp_path: Path
         files=[FileInput(filename="a.txt", source=BytesIO(b"a"))],
         relative_paths=[" root/sub/a.txt"],
         current_user=user,
+        db=workspace_db,
     )
 
     assert result["entries"][0]["path"] == "/ root/sub/a.txt"
@@ -399,7 +399,9 @@ async def test_folder_upload_preserves_leading_space_in_root_name(tmp_path: Path
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("relative_path", ["root/a.txt ", "root /a.txt", "root/sub\t/a.txt"])
-async def test_folder_upload_rejects_trailing_whitespace_before_writing(tmp_path: Path, monkeypatch, relative_path: str) -> None:
+async def test_folder_upload_rejects_trailing_whitespace_before_writing(
+    tmp_path: Path, monkeypatch, workspace_db, relative_path: str
+) -> None:
     """通用 scope 不能可靠寻址尾随空白名称，上传应显式拒绝而非改名。"""
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
@@ -411,6 +413,7 @@ async def test_folder_upload_rejects_trailing_whitespace_before_writing(tmp_path
             files=[FileInput(filename="a.txt", source=BytesIO(b"a"))],
             relative_paths=[relative_path],
             current_user=user,
+            db=workspace_db,
         )
 
     assert not (root / "root").exists()
@@ -433,7 +436,7 @@ async def test_folder_upload_rejects_trailing_whitespace_before_writing(tmp_path
         "root/\x00nul.txt",
     ],
 )
-async def test_upload_workspace_files_rejects_invalid_relative_paths(tmp_path: Path, monkeypatch, relative_path: str) -> None:
+async def test_upload_workspace_files_rejects_invalid_relative_paths(tmp_path: Path, monkeypatch, workspace_db, relative_path: str) -> None:
     """越界、绝对路径和非法路径组件在写入前被拒绝。"""
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
@@ -445,6 +448,7 @@ async def test_upload_workspace_files_rejects_invalid_relative_paths(tmp_path: P
             files=[FileInput(filename="x.txt", source=BytesIO(b"x"))],
             relative_paths=[relative_path],
             current_user=user,
+            db=workspace_db,
         )
 
     assert isinstance(exc_info.value, InvalidInputError)
@@ -461,7 +465,9 @@ async def test_upload_workspace_files_rejects_invalid_relative_paths(tmp_path: P
         "/".join(["b" * 64] * 63) + "/f.txt",
     ],
 )
-async def test_upload_workspace_files_rejects_overlong_or_too_deep_paths(tmp_path: Path, monkeypatch, relative_path: str) -> None:
+async def test_upload_workspace_files_rejects_overlong_or_too_deep_paths(
+    tmp_path: Path, monkeypatch, workspace_db, relative_path: str
+) -> None:
     """深度和路径长度在写入前受限，避免创建无法回收的目录树。"""
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
@@ -473,6 +479,7 @@ async def test_upload_workspace_files_rejects_overlong_or_too_deep_paths(tmp_pat
             files=[FileInput(filename="f.txt", source=BytesIO(b"x"))],
             relative_paths=[relative_path],
             current_user=user,
+            db=workspace_db,
         )
 
     assert not (root / "a").exists()
@@ -480,7 +487,7 @@ async def test_upload_workspace_files_rejects_overlong_or_too_deep_paths(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_upload_workspace_files_enforces_full_path_depth_boundary(tmp_path: Path, monkeypatch) -> None:
+async def test_upload_workspace_files_enforces_full_path_depth_boundary(tmp_path: Path, monkeypatch, workspace_db) -> None:
     """parent_path 的累积深度也计入上限，边界内可写且可删除。"""
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
@@ -493,6 +500,7 @@ async def test_upload_workspace_files_enforces_full_path_depth_boundary(tmp_path
         files=[FileInput(filename="ok.txt", source=BytesIO(b"ok"))],
         relative_paths=["ok.txt"],
         current_user=user,
+        db=workspace_db,
     )
     assert accepted["entries"][0]["path"] == f"/{parent}/ok.txt"
     assert (root / parent / "ok.txt").read_bytes() == b"ok"
@@ -503,6 +511,7 @@ async def test_upload_workspace_files_enforces_full_path_depth_boundary(tmp_path
             files=[FileInput(filename="bad.txt", source=BytesIO(b"bad"))],
             relative_paths=["sub/bad.txt"],
             current_user=user,
+            db=workspace_db,
         )
     assert "层级过深" in relative_error.value.message
     assert not (root / parent / "sub/bad.txt").exists()
@@ -515,17 +524,17 @@ async def test_upload_workspace_files_enforces_full_path_depth_boundary(tmp_path
             files=[FileInput(filename="x.txt", source=BytesIO(b"x"))],
             relative_paths=["x.txt"],
             current_user=user,
+            db=workspace_db,
         )
     assert "目标目录层级过深" in parent_error.value.message
     assert not (root / deeper / "x.txt").exists()
 
-    monkeypatch.setattr(svc, "ProjectRepository", lambda _db: _Referenced([]))
-    await svc.delete_workspace_path(path="/p", current_user=user, db=SimpleNamespace())
+    await svc.delete_workspace_path(path="/p", current_user=user)
     assert not (root / "p").exists()
 
 
 @pytest.mark.asyncio
-async def test_upload_workspace_files_accepts_component_and_path_boundaries(tmp_path: Path, monkeypatch) -> None:
+async def test_upload_workspace_files_accepts_component_and_path_boundaries(tmp_path: Path, monkeypatch, workspace_db) -> None:
     """255 字节组件和多 KB 路径仍可写入，避免上限意外收紧。"""
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
@@ -538,12 +547,14 @@ async def test_upload_workspace_files_accepts_component_and_path_boundaries(tmp_
         files=[FileInput(filename="f.txt", source=BytesIO(b"x"))],
         relative_paths=[f"{long_name}/f.txt"],
         current_user=user,
+        db=workspace_db,
     )
     await svc.upload_workspace_files(
         parent_path="/",
         files=[FileInput(filename="f.txt", source=BytesIO(b"x"))],
         relative_paths=[long_path],
         current_user=user,
+        db=workspace_db,
     )
 
     assert (root / long_name / "f.txt").read_bytes() == b"x"
@@ -571,7 +582,7 @@ def test_normalize_upload_relative_path_locks_exact_byte_limit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_upload_workspace_files_rejects_overlong_flat_filename(tmp_path: Path, monkeypatch) -> None:
+async def test_upload_workspace_files_rejects_overlong_flat_filename(tmp_path: Path, monkeypatch, workspace_db) -> None:
     """普通上传的超长文件名在预检阶段映射为业务错误而不是 500。"""
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
@@ -582,6 +593,7 @@ async def test_upload_workspace_files_rejects_overlong_flat_filename(tmp_path: P
             parent_path="/",
             files=[FileInput(filename="a" * 300 + ".txt", source=BytesIO(b"x"))],
             current_user=user,
+            db=workspace_db,
         )
 
     assert "文件路径过长" in exc_info.value.message
@@ -589,7 +601,7 @@ async def test_upload_workspace_files_rejects_overlong_flat_filename(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_upload_workspace_files_rejects_duplicate_targets(tmp_path: Path, monkeypatch) -> None:
+async def test_upload_workspace_files_rejects_duplicate_targets(tmp_path: Path, monkeypatch, workspace_db) -> None:
     """不同上传文件不能落到同一个目标路径。"""
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
@@ -604,6 +616,7 @@ async def test_upload_workspace_files_rejects_duplicate_targets(tmp_path: Path, 
             ],
             relative_paths=["root/a.txt", "root/a.txt"],
             current_user=user,
+            db=workspace_db,
         )
 
     assert "上传目标重复" in exc_info.value.message
@@ -611,7 +624,7 @@ async def test_upload_workspace_files_rejects_duplicate_targets(tmp_path: Path, 
 
 
 @pytest.mark.asyncio
-async def test_upload_workspace_files_rejects_relative_path_count_mismatch(tmp_path: Path, monkeypatch) -> None:
+async def test_upload_workspace_files_rejects_relative_path_count_mismatch(tmp_path: Path, monkeypatch, workspace_db) -> None:
     """相对路径必须与文件列表逐项对应。"""
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
 
@@ -621,13 +634,16 @@ async def test_upload_workspace_files_rejects_relative_path_count_mismatch(tmp_p
             files=[FileInput(filename="a.txt", source=BytesIO(b"a")), FileInput(filename="b.txt", source=BytesIO(b"b"))],
             relative_paths=["root/a.txt"],
             current_user=_user(),
+            db=workspace_db,
         )
 
     assert "相对路径数量" in exc_info.value.message
 
 
 @pytest.mark.asyncio
-async def test_upload_workspace_files_merges_existing_directory_and_rejects_existing_file(tmp_path: Path, monkeypatch) -> None:
+async def test_upload_workspace_files_merges_existing_directory_and_rejects_existing_file(
+    tmp_path: Path, monkeypatch, workspace_db
+) -> None:
     """已有目录可复用，但任一目标已存在时写入前整批拒绝。"""
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
@@ -640,6 +656,7 @@ async def test_upload_workspace_files_merges_existing_directory_and_rejects_exis
         files=[FileInput(filename="a.txt", source=BytesIO(b"merged"))],
         relative_paths=["root/sub/a.txt"],
         current_user=user,
+        db=workspace_db,
     )
     assert merged["entries"][0]["path"] == "/root/sub/a.txt"
     assert (root / "root/sub/a.txt").read_bytes() == b"merged"
@@ -653,6 +670,7 @@ async def test_upload_workspace_files_merges_existing_directory_and_rejects_exis
             ],
             relative_paths=["root/new.txt", "root/a.txt"],
             current_user=user,
+            db=workspace_db,
         )
 
     assert "已存在" in exc_info.value.message
@@ -661,7 +679,7 @@ async def test_upload_workspace_files_merges_existing_directory_and_rejects_exis
 
 
 @pytest.mark.asyncio
-async def test_upload_workspace_files_rejects_file_directory_conflict(tmp_path: Path, monkeypatch) -> None:
+async def test_upload_workspace_files_rejects_file_directory_conflict(tmp_path: Path, monkeypatch, workspace_db) -> None:
     """需要目录的位置已有普通文件时返回业务错误而不是 500。"""
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
@@ -675,6 +693,7 @@ async def test_upload_workspace_files_rejects_file_directory_conflict(tmp_path: 
             files=[FileInput(filename="child.txt", source=BytesIO(b"child"))],
             relative_paths=["root/sub/child.txt"],
             current_user=user,
+            db=workspace_db,
         )
 
     assert "目标路径不可用" in exc_info.value.message
@@ -684,7 +703,7 @@ async def test_upload_workspace_files_rejects_file_directory_conflict(tmp_path: 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("paths", [["root/node", "root/node/child.txt"], ["root/node/child.txt", "root/node"]])
-async def test_folder_upload_rejects_ancestor_targets_before_writing(tmp_path: Path, monkeypatch, paths) -> None:
+async def test_folder_upload_rejects_ancestor_targets_before_writing(tmp_path: Path, monkeypatch, workspace_db, paths) -> None:
     """同批文件不能同时成为另一个文件的父目录，顺序不影响拒绝结果。"""
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
@@ -696,6 +715,7 @@ async def test_folder_upload_rejects_ancestor_targets_before_writing(tmp_path: P
             files=[FileInput(filename="file.txt", source=BytesIO(b"x")) for _path in paths],
             relative_paths=paths,
             current_user=user,
+            db=workspace_db,
         )
 
     assert not (root / "root").exists()

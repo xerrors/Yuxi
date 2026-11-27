@@ -1,18 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import errno
 import hashlib
 import os
 import re
+import subprocess
+import unicodedata
 import uuid
 from collections.abc import Collection, Iterator
 from datetime import datetime
+from itertools import islice
 from pathlib import Path, PurePosixPath
 
 from yuxi.infrastructure.filesystem import open_directory_fd
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.runtime_settings import get_user_data_dir
+from yuxi.modules.workspace.usage_changes import workspace_mutation
 from yuxi.shared.datetime import ensure_shanghai, shanghai_now
 
 WORKSPACE_DIR_NAME = "workspace"
@@ -22,16 +27,17 @@ WORKSPACE_AGENT_CONTEXT_FILES = {
     "USER.md": "# USER\n\n以下是有关用户的一些信息\n",
     "MEMORY.md": "# MEMORY\n\n以下是 Agent 需要记住的一些信息\n",
 }
-WORKDIR_PROJECTS_DIR_NAME = "projects"
 
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
-# managed Workdir 同时接受当前与历史两种 canonical 名称形态。
-_MANAGED_WORKDIR_NAME_RE = re.compile(r"^(?P<timestamp>\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})_[0-9a-f]{8}(?:-[1-9]\d*)?$")
-_MANAGED_WORKDIR_TIMESTAMP_FORMAT = "%Y-%m-%d_%H-%M-%S"
-_MANAGED_WORKDIR_DATE_RE = re.compile(r"[0-9]{8}")
-_MANAGED_WORKDIR_PROJECT_NAME_RE = re.compile(r"[0-9a-f]{6}(?:-[1-9][0-9]*)?")
-_MANAGED_WORKDIR_DATE_FORMAT = "%Y%m%d"
-
+_TASK_WORKDIR_ROOT = (WORKSPACE_AGENTS_DIR_NAME, "tasks")
+_TASK_WORKDIR_DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+_TASK_WORKDIR_WORD_LIMIT = 4
+_TASK_WORKDIR_PREFIX_LIMIT = 40
+# 前缀词数由分配器与校验器共用同一常量，避免生成器产出被自身拒收的名称。
+# 非贪婪量词优先让短标识尽早匹配，长前缀后的十六进制词才不会被并进前缀。
+_TASK_WORKDIR_NAME_RE = re.compile(
+    rf"(?P<prefix>[a-z0-9]+(?:-[a-z0-9]+){{0,{_TASK_WORKDIR_WORD_LIMIT - 1}}}?)-[0-9a-f]{{6}}(?:-[1-9][0-9]*)?"
+)
 
 # 不可信路径的校验与规范化：纯字符串判定，不访问文件系统。
 
@@ -74,31 +80,20 @@ def normalize_workdir_path(workdir_path: str) -> str:
 
 
 def normalize_managed_workdir_path(workdir_path: str) -> str:
-    """规范化服务端管理的 Workdir 路径。
-
-    只接受 projects/<日期>/<项目标识> 与历史 projects/<时间戳>_<实例标识> 两种
-    canonical 形态，并要求日期真实存在，保证数据库绑定始终能够落盘。
-    """
+    """校验新建任务目录的路径形态与真实日期。"""
     try:
         pure = PurePosixPath(normalize_workdir_path(workdir_path))
-        date, date_format = _managed_workdir_date_and_format(pure)
-        datetime.strptime(date, date_format)
+        depth_ok = len(pure.parts) == 4 and pure.parts[:2] == _TASK_WORKDIR_ROOT
+        if not depth_ok:
+            raise ValueError
+        date, name = pure.parts[2:]
+        match = _TASK_WORKDIR_NAME_RE.fullmatch(name)
+        if not match or len(match.group("prefix")) > _TASK_WORKDIR_PREFIX_LIMIT or not _TASK_WORKDIR_DATE_RE.fullmatch(date):
+            raise ValueError
+        datetime.strptime(date, "%Y-%m-%d")
     except ValueError:
-        raise ValueError("managed workdir_path must use a supported projects/<managed-id>") from None
+        raise ValueError("managed workdir_path must use a supported managed directory layout") from None
     return pure.as_posix()
-
-
-def _managed_workdir_date_and_format(pure: PurePosixPath) -> tuple[str, str]:
-    """提取 managed Workdir 名称中的日期与对应格式，形态不符时抛出 ValueError。"""
-    if len(pure.parts) == 3 and pure.parts[0] == WORKDIR_PROJECTS_DIR_NAME:
-        date, name = pure.parts[1:]
-        if _MANAGED_WORKDIR_DATE_RE.fullmatch(date) and _MANAGED_WORKDIR_PROJECT_NAME_RE.fullmatch(name):
-            return date, _MANAGED_WORKDIR_DATE_FORMAT
-    elif len(pure.parts) == 2 and pure.parts[0] == WORKDIR_PROJECTS_DIR_NAME:
-        match = _MANAGED_WORKDIR_NAME_RE.fullmatch(pure.parts[1])
-        if match is not None:
-            return match.group("timestamp"), _MANAGED_WORKDIR_TIMESTAMP_FORMAT
-    raise ValueError("unsupported managed workdir layout")
 
 
 # 逻辑 UID 到宿主目录名的映射与用户路径解析。
@@ -131,6 +126,37 @@ def user_workspace_dir(uid: str) -> Path:
     return global_user_data_dir(uid) / WORKSPACE_DIR_NAME
 
 
+async def measure_allocated_bytes(uid: str) -> int:
+    """从固定目录 fd 统计已分配块，硬链接计一次，忽略其他文件系统。"""
+    try:
+        fd = _open_user_workspace_fd(uid)
+    except FileNotFoundError:
+        # 数据根缺失是扫描失败，只有用户目录尚未创建才记为零。
+        get_user_data_dir().stat()
+        return 0
+    try:
+        command = ("du", "-sx", "--block-size=1", "--", f"/proc/self/fd/{fd}/.")
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            pass_fds=(fd,),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        try:
+            async with asyncio.timeout(240):
+                output, _ = await process.communicate()
+        except (asyncio.CancelledError, TimeoutError):
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+            await process.wait()
+            raise
+        if process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, command)
+        return int(output.split(b"\t", 1)[0])
+    finally:
+        os.close(fd)
+
+
 def user_workdir_host_dir(uid: str, workdir_path: str) -> Path:
     """解析当前用户 Workdir，拒绝任意 symlink 路径组件。"""
     parts = PurePosixPath(normalize_workdir_path(workdir_path)).parts
@@ -146,31 +172,55 @@ def user_workdir_host_dir(uid: str, workdir_path: str) -> Path:
 
 def ensure_user_workspace(uid: str) -> None:
     """创建用户级 Workspace 与默认 Agent 上下文文件。"""
-    workspace_fd = _open_user_workspace_fd(uid, create=True)
     try:
-        _ensure_workspace_default_files_fd(workspace_fd)
+        workspace_fd = _open_user_workspace_fd(uid)
+    except FileNotFoundError:
+        with workspace_mutation(uid):
+            workspace_fd = _open_user_workspace_fd(uid, create=True)
+            try:
+                _ensure_workspace_default_files_fd(uid, workspace_fd)
+            finally:
+                os.close(workspace_fd)
+        return
+
+    try:
+        _ensure_workspace_default_files_fd(uid, workspace_fd)
     finally:
         os.close(workspace_fd)
 
 
 def allocate_default_user_workdir_path(
     uid: str,
-    project_id: str,
+    project_id: str | uuid.UUID,
     *,
+    naming_text: str | None = None,
     allocated_at: datetime | None = None,
     reserved_paths: Collection[str] = (),
 ) -> str:
-    """按上海日期与六位 Project 标识分配未占用的 managed Workdir 路径。"""
-    canonical_project_id = str(uuid.UUID(str(project_id)))
-    date = ensure_shanghai(allocated_at or shanghai_now()).strftime("%Y%m%d")
-    base_name = canonical_project_id[:6]
+    """按上海日期、首条用户文本和六位 Project 标识分配任务目录。"""
+    short_id = uuid.UUID(str(project_id)).hex[:6]
+    date = ensure_shanghai(allocated_at or shanghai_now()).date().isoformat()
+    parent = PurePosixPath(*_TASK_WORKDIR_ROOT, date)
+    base_name = f"{_task_workdir_prefix(naming_text or '')}-{short_id}"
+
     suffix = 0
     while True:
         name = base_name if suffix == 0 else f"{base_name}-{suffix}"
-        relative_path = f"{WORKDIR_PROJECTS_DIR_NAME}/{date}/{name}"
+        relative_path = (parent / name).as_posix()
         if relative_path not in reserved_paths and not _user_workspace_entry_exists(uid, relative_path):
             return relative_path
         suffix += 1
+
+
+def _task_workdir_prefix(text: str) -> str:
+    """含汉字时使用默认前缀，其余只保留前四个 ASCII 字母数字词。"""
+    han_names = ("CJK UNIFIED IDEOGRAPH-", "CJK COMPATIBILITY IDEOGRAPH-", "IDEOGRAPHIC NUMBER ZERO")
+    if any(unicodedata.name(char, "").startswith(han_names) for char in text if not char.isascii()):
+        return "new-chat"
+
+    matches = islice(re.finditer(r"[A-Za-z0-9]+", text), _TASK_WORKDIR_WORD_LIMIT)
+    prefix = "-".join(match.group().lower() for match in matches)
+    return prefix[:_TASK_WORKDIR_PREFIX_LIMIT].rstrip("-") or "new-chat"
 
 
 def _user_workspace_entry_exists(uid: str, workdir_path: str) -> bool:
@@ -198,22 +248,20 @@ def _user_workspace_entry_exists(uid: str, workdir_path: str) -> bool:
         os.close(workspace_fd)
 
 
-def ensure_bound_user_workdir(uid: str, workdir_path: str) -> None:
-    """物化已提交数据库绑定的 canonical Workdir。"""
-    normalized = normalize_managed_workdir_path(workdir_path)
-    parts = PurePosixPath(normalized).parts
-    try:
-        _open_workspace_directory(uid, parts)
-        return
-    except FileNotFoundError:
-        pass
-    ensure_user_workspace(uid)
-    workspace_fd = _open_user_workspace_fd(uid)
-    try:
-        directory_fd = _open_workspace_child_fd(workspace_fd, parts, create=True)
-        os.close(directory_fd)
-    finally:
-        os.close(workspace_fd)
+def create_managed_workdir(uid: str, workdir_path: str) -> None:
+    """排他物化新分配的目录，避免将后来占名的目录绑定给对话。"""
+    parts = PurePosixPath(normalize_managed_workdir_path(workdir_path)).parts
+    with workspace_mutation(uid):
+        ensure_user_workspace(uid)
+        workspace_fd = _open_user_workspace_fd(uid)
+        try:
+            parent_fd = _open_workspace_child_fd(workspace_fd, parts[:-1], create=True)
+            try:
+                os.mkdir(parts[-1], 0o700, dir_fd=parent_fd)
+            finally:
+                os.close(parent_fd)
+        finally:
+            os.close(workspace_fd)
 
 
 # fd 边界实现：目录访问均经 O_NOFOLLOW 逐层打开，symlink 与非目录组件统一翻译为 ValueError。
@@ -259,20 +307,40 @@ def _open_workspace_directory(uid: str, parts: tuple[str, ...]) -> None:
         os.close(directory_fd)
 
 
-def _ensure_workspace_default_files_fd(workspace_fd: int) -> None:
+def _ensure_workspace_default_files_fd(uid: str, workspace_fd: int) -> None:
     """通过已校验的 Workspace fd 初始化默认 Agent 上下文文件。
 
     初始化是尽力而为：Agents 目录或单个文件失败只记录告警，不阻塞 Workspace 创建；
     写入中途失败则关闭 fd、删除半成品文件后原样抛出。
     """
     try:
-        agents_fd = open_directory_fd(workspace_fd, (WORKSPACE_AGENTS_DIR_NAME,), create=True)
+        agents_fd = open_directory_fd(workspace_fd, (WORKSPACE_AGENTS_DIR_NAME,))
+    except FileNotFoundError:
+        try:
+            with workspace_mutation(uid):
+                agents_fd = open_directory_fd(workspace_fd, (WORKSPACE_AGENTS_DIR_NAME,), create=True)
+        except OSError as exc:
+            logger.warning("工作区默认 Agents 目录初始化失败: {}", exc)
+            return
     except OSError as exc:
-        logger.warning(f"工作区默认 Agents 目录初始化失败: {exc}")
+        logger.warning("工作区默认 Agents 目录初始化失败: {}", exc)
         return
     try:
-        for filename, default_content in WORKSPACE_AGENT_CONTEXT_FILES.items():
-            _write_default_agent_context_file(agents_fd, filename, default_content)
+        missing = []
+        for filename in WORKSPACE_AGENT_CONTEXT_FILES:
+            try:
+                os.stat(filename, dir_fd=agents_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                missing.append(filename)
+            except OSError as exc:
+                logger.warning("工作区默认 Agent 上下文检查失败 {}: {}", filename, exc)
+        if missing:
+            try:
+                with workspace_mutation(uid):
+                    for filename in missing:
+                        _write_default_agent_context_file(agents_fd, filename, WORKSPACE_AGENT_CONTEXT_FILES[filename])
+            except OSError as exc:
+                logger.warning("工作区默认 Agent 上下文初始化失败: {}", exc)
     finally:
         os.close(agents_fd)
 

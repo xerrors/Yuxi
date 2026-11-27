@@ -24,7 +24,7 @@ async (page) => {
   })
   const requests = [], unknown = new Set()
   let failNext = false, delayed = false, release
-  let failAgent = false
+  let failAgent = false, missingWorkdir = false, failWorkdir = false
   const agentRequest = Promise.withResolvers()
   const releaseAgent = Promise.withResolvers()
   const check = (condition, message) => { if (!condition) throw new Error(message) }
@@ -38,8 +38,15 @@ async (page) => {
     else if (path === '/api/system/info') json = { success: true, data: {
       branding: { name: '语析', title: '语析', logo: '/favicon.svg' }
     } }
-    else if (path === '/api/mention/plugins') json = []
+    else if (path === '/api/mention/resources') json = {}
     else if (path === '/api/agent') json = { agents: [agent] }
+    else if (path === `/api/agent/threads/${threadId}/workdir`) {
+      if (failWorkdir) return route.fulfill({ status: 503, json: { detail: '暂停工作目录检查' } })
+      if (missingWorkdir) return route.fulfill({ status: 409, json: {
+        detail: { code: 'session_workdir_unavailable', message: '对话的工作目录已不存在或不可访问' }
+      } })
+      return route.fulfill({ status: 204 })
+    }
     else if (path === `/api/agent/${agentId}`) {
       if (coldHistory) {
         agentRequest.resolve()
@@ -143,9 +150,9 @@ async (page) => {
   failAgent = true
   requests.length = 0 // 首读失败没有产生历史；后续窗口 oracle 从真实重试开始计数。
   await page.getByRole('button', { name: '重新读取对话', exact: true }).click()
-  await page.getByText('智能体加载失败，请重试', { exact: true }).waitFor()
+  await page.getByText('会话执行条件加载失败，请重试', { exact: true }).waitFor()
   check(requests.length === 3, `历史重试首次窗口请求数 ${requests.length}`)
-  // 输入准备失败的重试只重新读取 Agent，保留已打开的历史窗口。
+  // 输入准备失败的重试重新检查执行条件，保留已打开的历史窗口。
   failAgent = false
   await page.locator('.agent-availability-notice').getByRole('button', { name: '重试', exact: true }).click()
   await page.locator('.agent-view [contenteditable="true"]').waitFor()
@@ -302,6 +309,68 @@ async (page) => {
   check(await page.getByText('历史消息 0950：', { exact: false }).count() === 1, '发送或终态重读丢失/复制历史')
   check(await page.getByText('冻结输入内容', { exact: true }).count() === 1, '乐观消息与正式输入重复展示')
   await chat.getByText('唯一流的最终回答', { exact: true }).filter({ visible: true }).waitFor()
+  missingWorkdir = true
+  let missingQueueControl = 0, stopRequests = 0
+  await page.route(`**/api/v1/agents/sessions/${threadId}/events`, route => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const [event] = route.request().postDataJSON().events
+    if (event.type === 'yuxi.session.input.continue') {
+      missingQueueControl++
+      return route.fulfill({ status: 409, json: { detail: {
+        code: 'session_workdir_unavailable', message: '对话的工作目录已不存在或不可访问'
+      } } })
+    }
+    if (event.type === 'agent.session.input.cancel' && event.yuxi.expected_run_id === runId) {
+      stopRequests++
+      return route.fulfill({ status: 202, json: { status: 'accepted', run_id: runId, turn_id: turnId } })
+    }
+    return route.fallback()
+  })
+  await page.evaluate(async id => {
+    const { useSessionRuntimeStore } = await import('/src/modules/session/model/sessionRuntime.js')
+    const state = useSessionRuntimeStore().getThreadState(id)
+    state.queueSnapshot = { status: 'paused' }
+    state.queuedInputs = [{ input_id: 'paused-input', status: 'pending', kind: 'follow_up', content: '等候中的消息', attachment_status: 'preparing', attachment_error: '对话的工作目录已不存在或不可访问' }]
+  }, threadId)
+  await page.getByText('附件准备受阻', { exact: true }).waitFor()
+  const missingNotice = page.getByText('该对话的工作目录已不存在或不可访问，只能查看历史记录。', { exact: true })
+  await page.getByRole('button', { name: '继续队列', exact: true }).click()
+  await missingNotice.waitFor()
+  check(missingQueueControl === 1, '继续队列收到目录冲突后应切换会话为不可用')
+  check(await selectThread() === true, '工作目录缺失时应能重新打开对话')
+  await missingNotice.waitFor()
+  await editor.waitFor({ state: 'hidden' })
+  check(await chat.getByText('唯一流的最终回答', { exact: true }).isVisible(), '工作目录缺失时丢失历史回答')
+  await page.locator('.ant-message-notice').first().waitFor({ state: 'hidden' })
+  const stopActiveRun = async () => {
+    await page.evaluate(async ({ threadId, turnId, runId }) => {
+      const { useSessionRuntimeStore } = await import('/src/modules/session/model/sessionRuntime.js')
+      const runtime = useSessionRuntimeStore()
+      runtime.pendingSends[threadId] = { submitting: false }
+      Object.assign(runtime.getThreadState(threadId), {
+        isStreaming: true, currentTurnId: turnId, activeRunId: runId, cancellationPending: false
+      })
+    }, { threadId, turnId, runId })
+    const stop = page.waitForResponse(response => response.request().method() === 'POST' && response.status() === 202)
+    await page.getByRole('button', { name: '停止回答', exact: true }).click()
+    await stop
+    await page.evaluate(async id => {
+      const { useSessionRuntimeStore } = await import('/src/modules/session/model/sessionRuntime.js')
+      delete useSessionRuntimeStore().pendingSends[id]
+    }, threadId)
+  }
+  await stopActiveRun()
+  check(stopRequests === 1, '工作目录缺失且有草稿或待确认发送时仍应能停止原任务')
+  missingWorkdir = false
+  failWorkdir = true
+  check(await selectThread() === true, '目录检查失败时应能打开历史')
+  await page.getByText('会话执行条件加载失败，请重试', { exact: true }).waitFor()
+  await stopActiveRun()
+  check(stopRequests === 2, '目录检查返回 503 时仍应能停止原任务')
+  failWorkdir = false
+  check(await selectThread() === true, '恢复目录后应能重新打开对话')
+  await editor.waitFor()
+  check(await editor.innerText() === '用户继续编辑的新草稿', '停止任务丢失了未发送的草稿')
   // 真实页面公开路由入口必须重新核对已缓存 Thread 的可见性。
   let publicFailure = 403, rechecks = 0
   await page.route(`**/api/v1/agents/sessions/${threadId}`, route => {

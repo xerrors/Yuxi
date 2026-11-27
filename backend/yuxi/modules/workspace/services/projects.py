@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from yuxi.modules.workspace.errors import ProjectHasPendingAgentWorkError
 from yuxi.modules.workspace.models import Project
-from yuxi.modules.workspace.paths import allocate_default_user_workdir_path, normalize_workdir_path
+from yuxi.modules.workspace.paths import allocate_default_user_workdir_path, create_managed_workdir, normalize_workdir_path
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
 from yuxi.modules.workspace.workdir import Workdir
 from yuxi.shared.datetime import utc_now
@@ -59,7 +59,7 @@ async def create_project_view(*, uid: str, request_id: str, name: str, directory
     return project.to_dict()
 
 
-async def create_implicit_project(*, uid: str, db, idempotency_key: str | None = None) -> Project:
+async def create_implicit_project(*, uid: str, db, idempotency_key: str | None = None, naming_text: str | None = None) -> Project:
     """为新 Session 创建 implicit managed Project。"""
     return await create_project_record(
         uid=uid,
@@ -68,7 +68,16 @@ async def create_implicit_project(*, uid: str, db, idempotency_key: str | None =
         selection_status="implicit",
         db=db,
         idempotency_key=idempotency_key,
+        naming_text=naming_text,
     )
+
+
+def materialize_implicit_project(project: Project) -> None:
+    """在创建用例提交前排他建立新绑定的目录，保留任何晚到的占用。"""
+    try:
+        create_managed_workdir(project.uid, project.workdir_path)
+    except (FileExistsError, ValueError) as exc:
+        raise StateConflictError("工作目录路径已被占用，请重试创建对话") from exc
 
 
 async def create_project_record(
@@ -80,6 +89,7 @@ async def create_project_record(
     db,
     workdir_path: str | None = None,
     idempotency_key: str | None = None,
+    naming_text: str | None = None,
 ) -> Project:
     """在当前事务内创建 Project，但不提交或物化 managed 目录。"""
     normalized_name = _normalize_project_name(name, required=selection_status == "selectable")
@@ -94,7 +104,10 @@ async def create_project_record(
             raise InvalidInputError("managed Project 不接受 workdir_path")
         await _lock_project_workdir_changes(db=db, uid=uid)
         reserved_paths = await ProjectRepository(db).list_bound_workdir_paths_for_user(uid)
-        normalized_path = allocate_default_user_workdir_path(uid, project_id, reserved_paths=reserved_paths)
+        try:
+            normalized_path = allocate_default_user_workdir_path(uid, project_id, reserved_paths=reserved_paths, naming_text=naming_text)
+        except ValueError as exc:
+            raise StateConflictError("工作目录的父路径已被占用") from exc
     else:
         if workdir_path is None:
             raise InvalidInputError("linked Project 必须指定 workdir_path")
@@ -174,6 +187,10 @@ async def list_history_candidates_view(*, uid: str, db, query: str = "", limit: 
         ):
             continue
         seen_workdirs.add(workdir_path)
+        try:
+            Workdir.open_existing(uid, workdir_path)
+        except (FileNotFoundError, NotADirectoryError, PermissionError, ValueError):
+            continue
         items.append(
             {
                 "thread_id": item.thread_id,
@@ -183,6 +200,8 @@ async def list_history_candidates_view(*, uid: str, db, query: str = "", limit: 
                 "updated_at": item.updated_at.isoformat(),
             }
         )
+        if len(items) > offset + limit:
+            break
     return {"items": items[offset : offset + limit], "has_more": len(items) > offset + limit}
 
 

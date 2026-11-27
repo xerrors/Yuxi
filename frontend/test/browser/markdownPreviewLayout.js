@@ -32,7 +32,7 @@ async (page) => {
       document.body.append(host)
       const pinia = createPinia()
       const app = createApp({ render: () => h('div', [
-        h(AgentFilePreview, { filePath: '/README.md', file: { content: state.content, previewType: 'markdown' }, showFullscreen: true }),
+        h(AgentFilePreview, { filePath: '/README.md', file: { content: state.content, previewType: 'markdown' } }),
         h(MarkdownPreview, { id: 'compact-markdown', class: 'caller-markdown', compact: true, codeCopy: true, content: state.content, references: state.references, onClick: () => state.clicks++ }),
         h(DocumentPreview, { content: '# 文档容器\n\n正文', startLine: 3, endLine: 3 }),
         h(ChunksModal, { open: state.chunksOpen, fileGroup: { filename: '片段.md', chunks: [{ content: '# 检索片段\n\n第一段\n\n第二段' }] }, 'onUpdate:open': value => { state.chunksOpen = value } })
@@ -83,11 +83,6 @@ async (page) => {
       await page.setViewportSize({ width: 1440, height: 900 })
       await page.locator('#markdown-layout-probe .agent-file-preview').screenshot({ path: `/tmp/yuxi-markdown-padding-${dark ? 'dark' : 'light'}.png` })
     }
-    await page.locator('#markdown-layout-probe button[title="全屏预览"]').click()
-    const fullscreen = page.locator('.fullscreen-file-content .yk-markdown-preview')
-    await fullscreen.locator('h1').waitFor()
-    check(await fullscreen.evaluate(el => getComputedStyle(el).paddingTop === '16px'), '全屏预览没有恢复间距')
-    await page.locator('.fullscreen-preview-overlay button[title="关闭"]').click()
     await page.evaluate(() => { window.markdownLayoutProbe.state.chunksOpen = true })
     const chunk = page.locator('.chunk-markdown')
     await chunk.locator('h1').waitFor()
@@ -119,7 +114,7 @@ async (page) => {
     await page.locator('#compact-markdown .markdown-code-copy-btn').first().click()
     check(await page.evaluate(() => navigator.clipboard.readText()) === 'print(42)\n', '代码复制内容错误')
     check(errors.length === 0, `浏览器运行异常：${errors.join('; ')}`)
-    return { opaqueRowsRejected, measurements, fullscreen: true, chunks: true, referenceUpdates: true, codeCopy: true, legacyHtmlAsCode: true }
+    return { opaqueRowsRejected, measurements, chunks: true, referenceUpdates: true, codeCopy: true, legacyHtmlAsCode: true }
   } finally {
     await page.evaluate(theme => {
       const probe = window.markdownLayoutProbe

@@ -13,10 +13,7 @@ def test_workdir_access_resolves_only_scope_relative_paths():
     access = svc.AuthorizedWorkdir(
         session_record_id=1,
         thread_id="thread-1",
-        uid="user-1",
         workdir=workdir,
-        project_id="project-1",
-        directory_mode="managed",
     )
 
     assert access.workdir.workspace is workspace
@@ -160,8 +157,6 @@ async def test_binding_resolves_project_workdir_without_session_path(monkeypatch
 
     binding = await svc.resolve_authorized_workdir(thread_id="thread-1", uid="user-1", db=object())
 
-    assert binding.project_id == "project-1"
-    assert binding.directory_mode == "linked"
     assert binding.workdir_path == "client/demo"
 
 
@@ -171,12 +166,8 @@ async def test_ensure_linked_workdir_opens_existing_without_materializing(monkey
 
     async def resolve_binding(**_kwargs):
         return svc.WorkdirBinding(
-            session_record_id=1,
-            thread_id="thread-1",
             uid="user-1",
-            project_id="project-1",
             workdir_path="client/demo",
-            directory_mode="linked",
         )
 
     opened = []
@@ -188,11 +179,6 @@ async def test_ensure_linked_workdir_opens_existing_without_materializing(monkey
 
     monkeypatch.setattr(svc, "resolve_session_workdir_binding", resolve_binding)
     monkeypatch.setattr(svc, "Workdir", _Workdir)
-    monkeypatch.setattr(
-        svc,
-        "ensure_bound_user_workdir",
-        lambda *_args: pytest.fail("linked Workdir 不能走 managed 物化"),
-    )
 
     result = await svc.ensure_session_workdir_available(
         agent_session=agent_session,

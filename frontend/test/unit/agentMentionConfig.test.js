@@ -189,7 +189,7 @@ test('插件 mention 只包含已启用且当前可见的插件，并响应配�
   }
 })
 
-test('已有会话插件目录遵循快照，空目录不回退当前 Agent，新会话才沿用 Agent', async () => {
+test('已有会话资源目录遵循快照，草稿候选来自当前智能体', async () => {
   const server = await createTestServer({
     server: { middlewareMode: true, hmr: false }, appType: 'custom'
   })
@@ -197,24 +197,36 @@ test('已有会话插件目录遵循快照，空目录不回退当前 Agent，�
     const { useAgentMentionConfig } = await server.ssrLoadModule(
       '/src/modules/session/model/useAgentMentionConfig.js'
     )
-    const sessionPlugins = ref([{ id: 'abridge', name: '设备操作', description: '' }])
+    const sessionResources = ref({
+      plugins: [{ key: 'abridge', name: '设备操作' }],
+      skills: [{ key: 'old-skill', name: '旧会话 Skill' }],
+      knowledges: [{ key: 'old-kb', name: '旧会话知识库' }]
+    })
     const { mentionConfig } = useAgentMentionConfig({
       currentThreadAttachments: ref([]),
-      configurableItems: ref({ plugins: { default: [], options: [
-        { key: 'custom-image', name: '自定义图像' }
-      ] } }),
-      agentConfig: ref({ plugins: ['custom-image'] }),
-      sessionPlugins
+      configurableItems: ref({
+        plugins: { options: [{ key: 'custom-image', name: '自定义图像' }] },
+        skills: { options: [{ key: 'new-skill', name: '当前 Skill' }] },
+        knowledges: { options: [{ key: 'new-kb', name: '当前知识库' }] }
+      }),
+      agentConfig: ref({ plugins: ['custom-image'], skills: ['new-skill'], knowledges: ['new-kb'] }),
+      sessionResources
     })
     assert.deepEqual(mentionConfig.value.plugins, [
       { id: 'abridge', name: '设备操作', description: '' }
     ])
-    sessionPlugins.value = []
+    assert.deepEqual(mentionConfig.value.skills, [{ slug: 'old-skill', name: '旧会话 Skill', description: '' }])
+    assert.deepEqual(mentionConfig.value.knowledgeBases, [{ kb_id: 'old-kb', name: '旧会话知识库', description: '' }])
+    sessionResources.value = {}
     assert.deepEqual(mentionConfig.value.plugins, [])
-    sessionPlugins.value = null
+    assert.deepEqual(mentionConfig.value.skills, [])
+    assert.deepEqual(mentionConfig.value.knowledgeBases, [])
+    sessionResources.value = null
     assert.deepEqual(mentionConfig.value.plugins, [
       { id: 'custom-image', name: '自定义图像', description: '' }
     ])
+    assert.deepEqual(mentionConfig.value.skills, [{ slug: 'new-skill', name: '当前 Skill', description: '' }])
+    assert.deepEqual(mentionConfig.value.knowledgeBases, [{ kb_id: 'new-kb', name: '当前知识库', description: '' }])
   } finally {
     await server.close()
   }

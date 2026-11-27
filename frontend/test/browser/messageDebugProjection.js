@@ -2,6 +2,7 @@
 // 执行：playwright-cli -s=debug-projection run-code --filename=frontend/test/browser/messageDebugProjection.js
 // prettier-ignore
 async (page) => {
+  const origin = page.url().split('/').slice(0, 3).join('/')
   const threadId = '00000000-0000-4000-8000-000000000031'
   const agentId = '00000000-0000-4000-8000-000000000032'
   const thread = { id: threadId, object: 'agent.session', status: 'completed', agent: { id: agentId }, created_at: 1791580000, metadata: {},
@@ -43,8 +44,12 @@ async (page) => {
     await route.fulfill({ json })
   })
   await page.setViewportSize({ width: 1440, height: 900 })
-  await page.goto(`http://localhost:5173/agent/${threadId}`)
-  await page.locator('.agent-debug-mode-btn').click()
+  await page.goto(`${origin}/agent/${threadId}`)
+  const openSidebar = page.getByRole('button', { name: '打开侧边栏', exact: true })
+  await openSidebar.waitFor()
+  check(await page.locator('.chat-header').getByRole('button', { name: 'Debug', exact: true }).count() === 0, '聊天顶部不应显示 Debug 按钮')
+  await openSidebar.click()
+  await page.getByRole('button', { name: '调试', exact: true }).click()
   const panel = page.locator('.message-debug-panel')
   await panel.getByText('正在读取审计…', { exact: true }).waitFor()
   check(await panel.locator('.message-row').count() === 0, '加载时混入聊天历史')

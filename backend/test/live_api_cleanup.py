@@ -11,7 +11,7 @@ from pathlib import PurePosixPath
 
 import asyncpg
 import httpx
-from yuxi.modules.workspace.paths import normalize_workdir_path, user_workdir_host_dir
+from yuxi.modules.workspace.paths import normalize_managed_workdir_path, normalize_workdir_path, user_workdir_host_dir
 from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES
 from test.support.postgres import postgres_dsn
 
@@ -113,14 +113,17 @@ def _is_e2e_agent(agent: object, owner_uid: str) -> bool:
 
 
 def _resolve_test_workdir(uid: str, workdir_path: str) -> Path | None:
-    """校验并返回 UserWorkspace 内的 Project Workdir。"""
+    """校验并返回 UserWorkspace 内可清理的托管 Workdir。"""
     try:
         normalized = normalize_workdir_path(workdir_path)
     except ValueError as exc:
         raise RuntimeError(f"Test agent_session cleanup refuses invalid Workdir: {workdir_path!r}") from exc
     parts = PurePosixPath(normalized).parts
     if len(parts) < 2 or parts[0] != "projects":
-        raise RuntimeError(f"Test agent_session cleanup refuses non-project Workdir: {workdir_path!r}")
+        try:
+            normalize_managed_workdir_path(normalized)
+        except ValueError as exc:
+            raise RuntimeError(f"Test agent_session cleanup refuses non-managed Workdir: {workdir_path!r}") from exc
 
     try:
         workdir = user_workdir_host_dir(uid, normalized)

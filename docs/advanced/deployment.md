@@ -107,7 +107,7 @@ Compose 自动创建缺失的挂载目录，`storage-init` 在无网络、无平
 | `yuxi/threads`、`yuxi/skill-sources`、`yuxi/skill-projections` | `1000:1000` | `0700` |
 | `milvus/milvus`、`milvus/logs` | `999:999` | `0755` |
 
-以上路径均相对 `YUXI_STATE_DIR`。初始化可重复运行，仅调整五个目录本身；已有内部文件和目录的内容、数字属主与模式保持原值。恢复备份时保留原数字属主，历史内部权限错误由部署者离线处理。PostgreSQL、Redis、MinIO、Neo4j 继续遵循各自镜像的存储初始化契约。
+以上路径均相对 `YUXI_STATE_DIR`。候选 `v0.8.1.beta2` 还以 `1000:1000` 和 `0700` 初始化 `yuxi/threads/.workspace-usage` 及其 `locks` 子目录。初始化可重复运行，仅调整列出的目录本身。恢复备份时保留原数字属主，历史内部权限错误由部署者离线处理。PostgreSQL、Redis、MinIO、Neo4j 继续遵循各自镜像的存储初始化契约。
 
 API、Web 与 MinIO 的项目文件在构建时明确权限：源码和配置归 root 持有，普通文件可读、目录可进入、入口脚本可执行；API 与 worker 仍以 `1000:1000` 运行，仅在专用数据与运行目录写入。构建输入的 `600/700` 模式不会使镜像内的项目文件失去可读性。开发 Compose 的源码 bind mount 使用宿主文件实际权限，宿主 checkout 仍须允许容器用户读取与遍历；镜像权限不会覆盖挂载内容。实现与回归入口见[权限决策](../develop-guides/decisions/implemented/2026-10-17-container-storage-permissions.md)。
 
@@ -117,7 +117,7 @@ API、Web 与 MinIO 的项目文件在构建时明确权限：源码和配置归
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container --profile all up -d --build
 ```
 
-`app-init` 以 UID/GID 1000 运行，等待 PostgreSQL 健康与 `storage-init` 成功后，在数据库锁内初始化空库。当前基线为 business 7 / knowledge 2，包含应用表、索引、约束和 LangGraph checkpoint 表。已有库与镜像版本匹配时跳过建表，版本不匹配时初始化失败。随后同步系统配置定义、内置模型供应商、Agent、MCP 和 Skill 来源文件，API 与 worker 等待全部步骤成功。已有数据按[数据库与文件目录](#_3-数据库与文件目录)的规程离线升级。历史编号重置的背景见[版本 1 基线决定](../develop-guides/decisions/implemented/2026-10-19-schema-baseline-one.md)。
+`app-init` 以 UID/GID 1000 运行，等待 PostgreSQL 健康与 `storage-init` 成功后，在数据库锁内初始化空库。候选 `v0.8.1.beta2` 的基线为 business 8 / knowledge 2，包含应用表、索引、约束和 LangGraph checkpoint 表；正式 `v0.8.0` 的基线为 business 2 / knowledge 2。已有库与镜像版本匹配时跳过建表，版本不匹配时初始化失败。随后同步系统配置定义、内置模型供应商、Agent、MCP 和 Skill 来源文件，API 与 worker 等待全部步骤成功。已有数据按[数据库与文件目录](#_3-数据库与文件目录)的规程离线升级。历史编号重置的背景见[版本 1 基线决定](../develop-guides/decisions/implemented/2026-10-19-schema-baseline-one.md)。
 
 ### 可选关闭知识库
 
@@ -159,21 +159,21 @@ API 和 worker 在各自进程内继续校验密钥及 Schema，创建连接、�
 
 ## 3. 数据库与文件目录
 
-原地升级以完成应用初始化的正式 `v0.8.0` 为起点。维护前核对旧部署的发行标签，并在其 PostgreSQL 执行：
+升级到 `v0.8.1.beta2` 时，原地升级起点为已完成应用初始化的正式 `v0.8.0` 或候选 `v0.8.1.beta1`。维护前核对旧部署的发行标签，并在其 PostgreSQL 执行：
 
 ```sql
 SELECT domain, version FROM yuxi_schema_migrations ORDER BY domain;
 ```
 
-正式 `v0.8.0` 的数据库版本为 business 2 / knowledge 2。先排空任务、停止写入，执行[冷备规程](#停机备份与恢复演练)的第 1 至 3 步。备份完成后保持 Web、API 和 worker 停机，单独启动原 PostgreSQL 并等待健康。使用 Compose 内置数据库的示例如下，命令均沿用该实例的环境文件、项目名、profile 和叠加配置。
+正式 `v0.8.0` 的数据库版本为 business 2 / knowledge 2，已初始化的 `v0.8.1.beta1` 为 business 5 / knowledge 2。两者均先排空任务、停止写入，执行[冷备规程](#停机备份与恢复演练)的第 1 至 3 步。备份完成后保持 Web、API 和 worker 停机，单独启动原 PostgreSQL 并等待健康。使用 Compose 内置数据库的示例如下，命令均沿用该实例的环境文件、项目名、profile 和叠加配置。
 
 ```bash
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container up -d --wait postgres
 ```
 
-从 business 2 升级时，使用目标版本的 API 镜像、原工作区和 Skill 挂载，按[插件与配置迁移](../agents/skills-management.md#从运行依赖升级)导出、审阅、应用。回读应得到 business 5 / knowledge 2。从已完成插件迁移的同一次升级继续执行[会话状态迁移](#会话状态迁移)。
+从 business 2 升级时，使用目标版本的 API 镜像、原工作区和 Skill 挂载，按[插件与配置迁移](../agents/skills-management.md#从运行依赖升级)导出、审阅、应用。回读应得到 business 5 / knowledge 2。迁移至 business 5 后，或从已初始化的 `v0.8.1.beta1` 升级时，直接使用目标 API 镜像执行[会话状态迁移](#会话状态迁移)。
 
-空库直接运行目标版本的 `app-init`。过渡版本或其他历史库应从匹配的代码和成套备份单独处理。回退需恢复旧代码、数据库和同一停写时点的文件。
+空库直接运行目标版本的 `app-init`。其他过渡版本或历史库应从匹配的代码和成套备份单独处理。回退需恢复旧代码、数据库和同一停写时点的文件。
 
 应用不写入身份操作日志，初始 Schema 不创建 `operation_logs` 表。
 
@@ -199,7 +199,24 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml --profile contain
   api uv run --no-sync --no-dev python -m yuxi.migrations.workspace_recent_files
 ```
 
-回读域版本应为 business 7 / knowledge 2。Container 部署在恢复服务前按[远程 Skill 获取](./container-sandbox.md#远程-skill-获取)核对沙盒镜像及其 digest。再执行[共享内容更新](#共享内容更新与失败重试)，检查 readiness、已有会话和知识访问。
+回读域版本为 business 7 / knowledge 2 后，继续执行[个人空间用量迁移](#个人空间用量迁移)。
+
+### 个人空间用量迁移
+
+对 business 7 / knowledge 2 的库，在消费者停机时创建用量快照表。已有最近文件记录和工作目录保留，worker 为有待处理标记的用户首次成功计量时写入快照。
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container run --rm --no-deps \
+  api uv run --no-sync --no-dev python -m yuxi.migrations.workspace_usage
+```
+
+回读域版本应为 business 8 / knowledge 2。个人空间默认软配额为 10 GiB，可在 API 与 worker 的部署环境中统一设置正整数 `WORKSPACE_QUOTA_BYTES`。非法额度会阻止 API 和 worker 启动。worker 每五分钟统计有待处理变更的个人空间，按宿主目录的已分配块更新用量。用户写入工作区和沙盒创建、唤醒都触发登记。活跃沙盒持续统计，Cube VM 休眠或容器回收后，下一次成功统计结束本轮观察。达到额度后暂停新的文件上传和用户任务启动。一次获准的上传或运行中的任务都可能使实际用量超过额度。清理后，下一次成功统计低于额度即可恢复。
+
+升级时先让现有 Cube VM 休眠或结束旧版本容器，再部署新版 API、worker 和 runner。Compose 由 `storage-init` 在共享数据卷创建标记目录。升级要重建或拉取新版 `storage-init` 镜像并重新执行服务。已有用量快照保留，休眠用户首次在应用内写入或唤醒沙盒后刷新。直接从宿主增删文件的运维操作也可通过这些应用内入口触发重新计量。
+
+在个人空间侧栏点击或悬停用量说明图标，可查看最近一次统计是否失败。当前用户的 `GET /api/workspace/usage` 同时返回 `measurement_failed`、成功计量的 `used_bytes` 与 `measured_at`。worker 继续采用上次成功的用量判定准入，首次成功前允许写入。目录统计使用 worker 镜像的 GNU `du` 与容器的 `/proc`。持续失败时检查这两个依赖、用户目录的读取权限、挂载和超时日志。修复后在下一次巡检确认失败标志清除、统计时间已更新。
+
+Container 部署在恢复服务前按[远程 Skill 获取](./container-sandbox.md#远程-skill-获取)核对沙盒镜像及其 digest。再执行[共享内容更新](#共享内容更新与失败重试)，检查 readiness、已有会话和知识访问。
 
 ### 检查 PostgreSQL 会话时区
 

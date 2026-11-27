@@ -12,19 +12,20 @@ from test.integration.services.agent_input_fixtures import SCOPE
 from test.integration.services.agent_input_fixtures import send_input as _send
 from test.integration.services.agent_input_fixtures import start_input_run as _start
 from yuxi.infrastructure.minio import get_minio_client
+from yuxi.modules.agents.input_messages import build_chat_input_message
 from yuxi.modules.agents.models.attachments import AgentAttachment
 from yuxi.modules.agents.models.inputs import AgentInput, AgentInputReceipt
+from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.repositories.attachments import AttachmentRepository
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.services import attachments, inputs, runs, scheduler, threads
-from yuxi.modules.agents.input_messages import build_chat_input_message
+from yuxi.modules.agents.services.run_lifecycle import settle_run
 from yuxi.modules.workspace.filesystem import Workspace
 from yuxi.modules.workspace.models import Project
-from yuxi.modules.workspace.paths import ensure_user_workspace
+from yuxi.modules.workspace.paths import create_managed_workdir, user_workspace_dir
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
-from yuxi.modules.workspace.services.bindings import resolve_session_workdir_binding
 from yuxi.modules.workspace.workdir import Workdir
 from yuxi.shared.datetime import utc_now
 from yuxi.shared.errors import DomainError, InvalidInputError, StateConflictError
@@ -37,14 +38,12 @@ pytest_plugins = ["test.integration.services.agent_input_fixtures"]
 async def files_env(sessions, tmp_path, monkeypatch):  # noqa: F811
     """保留真实文件与对象边界，只有 ARQ 投递沿用隔离 fixture。"""
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path))
-    ensure_user_workspace(SCOPE.uid)
-    path = f"projects/2026-10-09_00-00-00_{uuid.uuid4().hex[:8]}"
+    path = f"agents/tasks/2026-10-09/new-chat-{uuid.uuid4().hex[:6]}"
     async with sessions() as db:
         project = await db.get(Project, "input-project")
         project.workdir_path = path
         await db.commit()
-    monkeypatch.setattr(inputs, "resolve_session_workdir_binding", resolve_session_workdir_binding)
-    monkeypatch.setattr(scheduler, "resolve_session_workdir_binding", resolve_session_workdir_binding)
+    create_managed_workdir(SCOPE.uid, path)
     uploaded = []
 
     async def upload(name="source.txt", content=b"original"):
@@ -268,12 +267,17 @@ async def test_steer_batch_anchors_each_input_and_rolls_back_all_projections(fil
 async def test_draft_send_and_replay_have_one_durable_submission(files_env):
     """上传没有线程引用，发送与响应丢失重试只有一份 Input 和目标文件。"""
     factory, upload, submit, workdir = files_env
+    Workspace(SCOPE.uid).delete_authorized_path(workdir.root_path, root="/")
     file = await upload()
     async with factory() as db:
         assert await AttachmentRepository(db).list_for_thread("input-thread", SCOPE.uid, SCOPE.app_id) == []
         assert await db.scalar(select(func.count()).select_from(AgentInput)) == 0
     with pytest.raises(FileNotFoundError):
         workdir.list_directory("/")
+    with pytest.raises(StateConflictError) as missing:
+        await submit(file, "one-submission")
+    assert missing.value.code == "session_workdir_unavailable"
+    create_managed_workdir(SCOPE.uid, workdir.relative_path)
     receipt = await submit(file, "one-submission")
     assert receipt["run_id"] is None
     async with factory() as db:
@@ -351,6 +355,100 @@ async def test_failed_preparation_blocks_dispatch_and_cancel_keeps_submission(fi
     assert workdir.read_file(f"/uploads/{file['id']}_source.txt", 1024) == b"original"
 
 
+@pytest.mark.parametrize("resolution", ["restore", "discard", "discard-after-restore"])
+@pytest.mark.parametrize("phase", ["before-preparation", "after-write", "after-check"])
+async def test_deleted_workdir_preserves_received_source_until_restore_or_explicit_delete(files_env, monkeypatch, resolution, phase):
+    """接收后到就绪提交前删除目录，保留附件来源与原输入。"""
+    factory, upload, submit, workdir = files_env
+    file = await upload()
+
+    def remove_workdir():
+        """模拟个人空间在附件写入流程之外删除目录。"""
+        Workspace(SCOPE.uid).delete_authorized_path(workdir.root_path, root="/")
+
+    with monkeypatch.context() as scoped:
+        if phase == "after-check":
+            check_files = attachments.require_attachment_files
+
+            def check_then_delete(uid, paths):
+                """文件检查成功后、数据库提交前删除目录。"""
+                check_files(uid, paths)
+                remove_workdir()
+
+            scoped.setattr(attachments, "require_attachment_files", check_then_delete)
+        else:
+            operation = "_store_attachment" if phase == "after-write" else "prepare_input_attachments"
+            original = getattr(attachments, operation)
+
+            async def remove_workdir_during_preparation(**kwargs):
+                if phase == "before-preparation":
+                    remove_workdir()
+                result = await original(**kwargs)
+                if phase == "after-write":
+                    remove_workdir()
+                return result
+
+            scoped.setattr(attachments, operation, remove_workdir_during_preparation)
+        receipt = await submit(file, "remove-before-ready")
+    client = get_minio_client()
+    bucket = client.KB_BUCKETS["documents"]
+    delete_args = {"thread_id": "input-thread", "file_id": file["id"], "current_uid": SCOPE.uid}
+
+    async with factory() as db:
+        record = await db.get(AgentAttachment, file["id"])
+        assert record.status == "preparing"
+        assert ("工作目录" if phase == "before-preparation" else "附件文件") in record.error
+        object_name = record.object_name
+        assert await client.adownload_file(bucket, object_name) == b"original"
+        assert (await db.get(AgentInput, receipt["input_id"])).status == "pending"
+        assert await db.scalar(select(func.count()).select_from(AgentRun)) == 0
+        with pytest.raises(StateConflictError, match="被输入使用"):
+            await attachments.delete_thread_attachment_view(db=db, **delete_args)
+        await db.rollback()
+
+    if resolution != "restore":
+        async with factory() as db:
+            item = await db.get(AgentInput, receipt["input_id"])
+            await AgentInputRepository(db).cancel(item)
+            await db.commit()
+        await scheduler.recover_pending_dispatches()
+        assert await client.adownload_file(bucket, object_name) == b"original"
+        directory_restored = resolution == "discard-after-restore"
+        if directory_restored:
+            async with factory() as db:
+
+                async def fail_commit():
+                    """来源已清除时模拟删除事务提交失败。"""
+                    raise RuntimeError("delete commit interrupted")
+
+                with monkeypatch.context() as scoped:
+                    scoped.setattr(db, "commit", fail_commit)
+                    with pytest.raises(RuntimeError, match="delete commit interrupted"):
+                        await attachments.delete_thread_attachment_view(db=db, **delete_args)
+                await db.rollback()
+            assert await client.astat_file(bucket, object_name) is None
+            create_managed_workdir(SCOPE.uid, workdir.relative_path)
+            await scheduler.recover_pending_dispatches()
+            async with factory() as db:
+                assert (await db.get(AgentAttachment, file["id"])).status == "preparing"
+        async with factory() as db:
+            await attachments.delete_thread_attachment_view(db=db, **delete_args)
+        async with factory() as db:
+            assert await db.get(AgentAttachment, file["id"]) is None
+            assert (await db.get(AgentInput, receipt["input_id"])).status == "cancelled"
+            assert await db.scalar(select(func.count()).select_from(AgentRun)) == 0
+        assert await client.astat_file(bucket, object_name) is None
+        assert (user_workspace_dir(SCOPE.uid) / workdir.relative_path).is_dir() == directory_restored
+    else:
+        create_managed_workdir(SCOPE.uid, workdir.relative_path)
+        await scheduler.recover_pending_dispatches()
+        async with factory() as db:
+            record = await db.get(AgentAttachment, file["id"])
+            assert record.status == "ready" and record.error is None and record.object_name is None
+            assert (await db.get(AgentInput, receipt["input_id"])).status == "pending"
+        assert workdir.read_file(f"/uploads/{file['id']}_source.txt", 1024) == b"original"
+
+
 async def test_crash_after_file_write_replays_the_same_input_and_path(files_env, monkeypatch):
     """文件准备后、就绪事务提交前崩溃，可以从已接收来源收敛。"""
     factory, upload, submit, workdir = files_env
@@ -385,6 +483,183 @@ async def test_crash_after_file_write_replays_the_same_input_and_path(files_env,
     async with factory() as db:
         assert not await AttachmentRepository(db).has_unready(input_id)
         assert await db.scalar(select(func.count()).select_from(AgentInputReceipt)) == 1
+
+
+@pytest.mark.parametrize("claim", ["dispatch", "continue", "steer"])
+async def test_claim_keeps_ready_source_when_formal_file_has_disappeared(files_env, monkeypatch, claim):
+    """正式文件丢失但 MinIO 来源仍在时，三个领取入口都等待重新准备。"""
+    factory, upload, submit, workdir = files_env
+    current = await _start(factory) if claim == "steer" else None
+    file = await upload()
+    client = get_minio_client()
+
+    async def skip_cleanup(**_kwargs):
+        """留下就绪事务提交后、清理来源前的持久状态。"""
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(attachments, "cleanup_prepared_sources", skip_cleanup)
+        receipt = await submit(file, "ready-before-cleanup", mode="steer" if current is not None else "follow_up")
+    Workspace(SCOPE.uid).delete_authorized_path(workdir.root_path, root="/")
+    create_managed_workdir(SCOPE.uid, workdir.relative_path)
+
+    async with factory() as db:
+        attachment = await db.get(AgentAttachment, file["id"])
+        assert attachment.status == "ready"
+        object_name = attachment.object_name
+        if claim == "continue":
+            control = await threads.continue_queue(
+                db=db, scope=SCOPE, thread_id="input-thread", idempotency_key="continue-missing-attachment"
+            )
+            assert control["run_id"] is None
+        else:
+            if claim == "steer":
+                run = await db.get(AgentRun, current.id)
+                output = Message(
+                    session_record_id=run.session_record_id,
+                    role="assistant",
+                    content="Current run is done.",
+                    run_id=run.id,
+                    turn_id=run.turn_id,
+                    delivery_status="complete",
+                )
+                db.add(output)
+                await db.flush()
+                run.output_message_id = output.id
+                assert not await runs.should_yield_for_steer(run.id)
+                with monkeypatch.context() as scoped:
+                    scoped.setattr(client, "astat_file", lambda *_args: pytest.fail("当前 Run 结算不应探测对象来源"))
+                    settlement = await settle_run(db=db, run=run, worker_id="owner", status="completed", token_usage=None)
+                assert settlement.status == "completed" and settlement.next_run_id is None
+                run.runtime_cleanup_pending = False
+            else:
+                (await SessionRepository(db).get_session_by_thread_id("input-thread")).queue_paused = False
+            await db.commit()
+    if claim == "dispatch":
+        assert await scheduler.dispatch_next_input(uid=SCOPE.uid, agent_slug="main", thread_id="input-thread")
+
+    bucket = client.KB_BUCKETS["documents"]
+    async with factory() as db:
+        attachment = await db.get(AgentAttachment, file["id"])
+        assert attachment.status == ("preparing" if claim == "dispatch" else "ready")
+        assert attachment.object_name == object_name
+        item = await db.get(AgentInput, receipt["input_id"])
+        assert item.status == "pending" and item.consumed_run_id is None
+    assert await client.adownload_file(bucket, object_name) == b"original"
+
+    await scheduler.recover_pending_dispatches()
+    await scheduler.recover_pending_dispatches()
+    async with factory() as db:
+        item = await db.get(AgentInput, receipt["input_id"])
+        assert item.status == "consumed"
+        assert (await db.get(AgentRun, item.consumed_run_id)).status == "pending"
+        assert (await db.get(AgentAttachment, file["id"])).object_name is None
+    assert await client.astat_file(bucket, object_name) is None
+    assert workdir.read_file(f"/uploads/{file['id']}_source.txt", 1024) == b"original"
+
+
+async def test_incomplete_source_cleanup_does_not_leave_an_input_waiting_forever(files_env, monkeypatch):
+    """临时对象已删除但清除列未提交时，领取后走 worker 的文件缺失终态。"""
+    factory, upload, submit, workdir = files_env
+    file = await upload()
+
+    async def skip_cleanup(**_kwargs):
+        """保留已提交的临时对象引用。"""
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(attachments, "cleanup_prepared_sources", skip_cleanup)
+        receipt = await submit(file, "source-already-removed")
+    async with factory() as db:
+        attachment = await db.get(AgentAttachment, file["id"])
+        object_name = attachment.object_name
+        path = attachment.path
+        (await SessionRepository(db).get_session_by_thread_id("input-thread")).queue_paused = False
+        await db.commit()
+    client = get_minio_client()
+    bucket = client.KB_BUCKETS["documents"]
+    await client.adelete_file(bucket, object_name)
+    assert await client.astat_file(bucket, object_name) is None
+    workdir.delete(f"/uploads/{file['id']}_source.txt")
+
+    await scheduler.recover_pending_dispatches()
+    await scheduler.recover_pending_dispatches()
+    async with factory() as db:
+        item = await db.get(AgentInput, receipt["input_id"])
+        assert item.status == "consumed" and item.consumed_run_id
+        assert (await db.get(AgentAttachment, file["id"])).object_name is None
+    with pytest.raises(StateConflictError, match="附件文件") as unavailable:
+        attachments.require_attachment_files(SCOPE.uid, [path])
+    assert unavailable.value.code == "attachment_file_unavailable"
+
+
+@pytest.mark.parametrize("phase", ["after-copy", "before-cleanup", "missing-parsed-source", "missing-parsed-resource"])
+async def test_parsed_attachment_checks_original_before_losing_source(files_env, monkeypatch, phase):
+    """仅原件被删除时可从完整来源恢复，部分来源缺失时保留现存的正式文档。"""
+    factory, upload, submit, workdir = files_env
+    file = await upload("parsed.pdf")
+    source_path = f"tmp/chat_attachments/{SCOPE.uid}/{file['id']}/parsed/v1"
+    original_path = f"/uploads/{file['id']}_parsed.pdf"
+    markdown_path = f"/uploads/attachments/{file['id']}/document.md"
+    (user_workspace_dir(SCOPE.uid) / source_path).mkdir(parents=True)
+    source = Workdir.open_existing(SCOPE.uid, source_path)
+    markdown = b"# Parsed\n![image](image.png)"
+    source.copy_file_from_stream("/document.md", BytesIO(markdown), max_bytes=1024)
+    source.copy_file_from_stream("/image.png", BytesIO(b"parsed image"), max_bytes=1024)
+    async with factory() as db:
+        draft = await db.get(AgentAttachment, file["id"])
+        object_name = draft.object_name
+        draft.parsed_source = f"{source_path}/document.md"
+        await db.commit()
+
+    with monkeypatch.context() as scoped:
+        if phase == "after-copy":
+            store = attachments._store_attachment
+
+            async def remove_original_after_copy(**kwargs):
+                record = await store(**kwargs)
+                workdir.delete(original_path)
+                return record
+
+            scoped.setattr(attachments, "_store_attachment", remove_original_after_copy)
+        else:
+
+            async def skip_cleanup(**_kwargs):
+                """模拟待清理来源的已提交附件。"""
+
+            scoped.setattr(attachments, "cleanup_prepared_sources", skip_cleanup)
+        receipt = await submit(file, "parsed-original-removed")
+    if phase != "after-copy":
+        workdir.delete(original_path)
+        if phase == "missing-parsed-source":
+            source.delete("/document.md")
+        if phase == "missing-parsed-resource":
+            source.delete("/image.png")
+        await scheduler.recover_pending_dispatches()
+    assert workdir.read_file(markdown_path, 1024) == markdown
+
+    client = get_minio_client()
+    bucket = client.KB_BUCKETS["documents"]
+    if phase.startswith("missing-parsed-"):
+        async with factory() as db:
+            attachment = await db.get(AgentAttachment, file["id"])
+            assert attachment.status == "ready" and attachment.object_name is None
+            (await SessionRepository(db).get_session_by_thread_id("input-thread")).queue_paused = False
+            await db.commit()
+        await scheduler.recover_pending_dispatches()
+        async with factory() as db:
+            assert (await db.get(AgentInput, receipt["input_id"])).status == "consumed"
+        assert await client.astat_file(bucket, object_name) is None
+        assert workdir.read_file(markdown_path, 1024) == markdown
+        return
+    async with factory() as db:
+        attachment = await db.get(AgentAttachment, file["id"])
+        assert attachment.status == "preparing" and attachment.object_name == object_name
+        assert attachment.parsed_source == f"{source_path}/document.md"
+    assert await client.adownload_file(bucket, object_name) == b"original"
+
+    await scheduler.recover_pending_dispatches()
+    assert workdir.read_file(original_path, 1024) == b"original"
+    assert workdir.read_file(markdown_path, 1024) == markdown
+    assert await client.astat_file(bucket, object_name) is None
 
 
 async def test_expiration_cannot_remove_received_source_and_steer_waits_for_ready(files_env, monkeypatch):
@@ -480,7 +755,9 @@ async def test_ready_steer_append_preserves_expired_source_and_committed_files(f
     bucket = client.KB_BUCKETS["documents"]
     prefix = f"tmp/chat_attachments/{SCOPE.uid}/{first['id']}"
     parsed_source = f"{prefix}/parsed/v1/document.md"
-    source = Workdir(f"{prefix}/parsed/v1", Workspace(SCOPE.uid))
+    source_path = f"{prefix}/parsed/v1"
+    (user_workspace_dir(SCOPE.uid) / source_path).mkdir(parents=True)
+    source = Workdir.open_existing(SCOPE.uid, source_path)
     source.copy_file_from_stream("/document.md", BytesIO(b"![image](images/page.png)"), max_bytes=1024)
     source.copy_file_from_stream("/images/page.png", BytesIO(b"parsed image"), max_bytes=1024)
     async with factory() as db:
@@ -569,3 +846,37 @@ async def test_attachment_delete_guards_and_failed_commit_preserve_formal_bytes(
         assert (await db.get(AgentInput, receipt["input_id"])).attachment_file_ids == [file["id"]]
         messages = await AgentInputRepository(db).list_messages(receipt["input_id"])
         assert messages == []
+
+
+async def test_over_quota_prepares_accepted_attachment_and_defers_turn(files_env, monkeypatch):
+    """超额时仍接收输入和准备附件，用量恢复后才绑定正式消息和 Run。"""
+    from yuxi.modules.workspace.repositories.usage import save_usage
+
+    factory, upload, submit, workdir = files_env
+    file = await upload()
+    threshold = 65536
+    monkeypatch.setenv("WORKSPACE_QUOTA_BYTES", str(threshold))
+
+    async with factory.begin() as db:
+        session = await SessionRepository(db).get_session_by_thread_id("input-thread")
+        session.queue_paused = False
+        await save_usage(db, SCOPE.uid, threshold, utc_now())
+
+    receipt = await submit(file, "quota-before-turn")
+    target = f"/uploads/{file['id']}_source.txt"
+    assert workdir.read_file(target, 1024) == b"original"
+    async with factory.begin() as db:
+        item = await db.get(AgentInput, receipt["input_id"])
+        attachment = await db.get(AgentAttachment, file["id"])
+        assert item.status == "pending" and item.turn_id is None and item.consumed_run_id is None
+        assert attachment.status == "ready" and attachment.message_id is None
+        await save_usage(db, SCOPE.uid, threshold - 1, utc_now())
+
+    await scheduler.recover_pending_dispatches()
+    async with factory() as db:
+        item = await db.get(AgentInput, receipt["input_id"])
+        attachment = await db.get(AgentAttachment, file["id"])
+        assert item.status == "consumed" and item.turn_id
+        assert attachment.status == "ready" and attachment.object_name is None and attachment.message_id
+        [message] = await AgentInputRepository(db).list_messages(item.id)
+        assert message.id == attachment.message_id

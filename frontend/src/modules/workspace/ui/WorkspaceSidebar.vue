@@ -42,12 +42,14 @@
       </small>
       <small v-else-if="knowledgeListStatus === 'ready' && !knowledgeBases.length">暂无可访问知识库</small>
     </nav>
+    <WorkspaceUsage class="sidebar-usage" />
   </aside>
 </template>
 
 <script setup>
 import { computed } from 'vue'
 import { Bookmark, createLucideIcon, FolderClosed, LayersPlus, LayoutGrid } from '@lucide/vue'
+import WorkspaceUsage from './WorkspaceUsage.vue'
 
 const props = defineProps({
   activeKey: { type: String, required: true },
@@ -114,6 +116,7 @@ const groups = computed(() =>
   border-right: 1px solid var(--gray-150);
 }
 .sidebar-heading {
+  flex: none;
   display: flex;
   align-items: center;
   min-height: var(--workspace-header-content-height);
@@ -122,8 +125,15 @@ const groups = computed(() =>
   font-size: 16px;
 }
 nav {
+  flex: 1;
+  min-height: 0;
   padding: 0 8px 16px;
   overflow-y: auto;
+}
+.sidebar-usage {
+  flex: none;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--gray-150);
 }
 nav button:where(:not(.ant-btn)) {
   display: flex;

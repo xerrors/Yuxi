@@ -1,6 +1,6 @@
 # Project 默认目录按日期分层
 
-状态：implemented
+状态：archived
 类型：feature
 Owner：backend/yuxi/modules/workspace/paths.py
 

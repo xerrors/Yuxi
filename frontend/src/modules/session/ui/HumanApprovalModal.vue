@@ -237,15 +237,17 @@
 
       <div v-if="isToolApproval" class="approval-actions tool-approval-actions">
         <button
-          ref="toolRejectButtonRef"
+          ref="toolSecondaryButtonRef"
           type="button"
           class="btn btn-reject"
           :disabled="isProcessing"
-          @click="handleToolDecision('reject')"
+          @click="submitDisabled ? handleCancel() : handleToolDecision('reject')"
         >
-          拒绝
+          {{ submitDisabled ? '停止本轮任务' : '拒绝' }}
         </button>
         <button
+          v-if="!submitDisabled"
+          ref="toolApproveButtonRef"
           type="button"
           class="btn btn-approve"
           :disabled="isProcessing"
@@ -295,6 +297,7 @@ const TOOL_DISPLAY_NAMES = {
 const props = defineProps({
   visible: { type: Boolean, default: false },
   processing: { type: Boolean, default: false },
+  submitDisabled: { type: Boolean, default: false },
   questions: { type: Array, default: () => [] },
   kind: { type: String, default: 'question' },
   actionRequests: { type: Array, default: () => [] },
@@ -317,7 +320,8 @@ const customAnswerQuestionIds = ref([])
 const otherTextareaRef = ref(null)
 const answerTextareaRef = ref(null)
 const questionTitleRef = ref(null)
-const toolRejectButtonRef = ref(null)
+const toolSecondaryButtonRef = ref(null)
+const toolApproveButtonRef = ref(null)
 const toolArgsExpanded = ref(false)
 const toolDecisions = ref({})
 const activeToolIndex = ref(0)
@@ -480,7 +484,7 @@ watch(
       nextTick(() => {
         adjustOtherTextareaHeight()
         if (isToolApproval.value) {
-          toolRejectButtonRef.value?.focus()
+          toolSecondaryButtonRef.value?.focus()
         } else {
           focusActiveQuestion()
         }
@@ -494,6 +498,12 @@ watch(
   },
   { immediate: true }
 )
+
+watch(() => props.submitDisabled, (disabled) => {
+  if (disabled && toolApproveButtonRef.value === document.activeElement) {
+    void nextTick(() => toolSecondaryButtonRef.value?.focus())
+  }
+})
 
 watch(
   normalizedQuestions,
@@ -562,7 +572,7 @@ const isCurrentQuestionAnswered = computed(() => {
 const primaryButtonText = computed(() => (isLastQuestion.value ? '提交' : '下一步'))
 
 const isPrimaryButtonDisabled = computed(() => {
-  if (isProcessing.value) return true
+  if (isProcessing.value || props.submitDisabled) return true
   if (!activeQuestion.value) return true
 
   if (isLastQuestion.value) {
@@ -613,7 +623,7 @@ const handleCancel = () => {
 }
 
 const handleToolDecision = (decision) => {
-  if (isProcessing.value || !activeToolRequest.value) return
+  if (isProcessing.value || props.submitDisabled || !activeToolRequest.value) return
 
   const nextDecisions = { ...toolDecisions.value, [activeToolIndex.value]: decision }
   toolDecisions.value = nextDecisions

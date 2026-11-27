@@ -33,13 +33,13 @@ from yuxi.modules.agents.services.inputs import accept_locked
 from yuxi.modules.agents.services.queue_control import pause_pending_queue
 from yuxi.modules.agents.services.run_creation import create_resume_run
 from yuxi.modules.agents.services.run_lifecycle import settle_waiting_cancel
-from yuxi.modules.agents.services.scheduler import Dispatch, deliver, dispatch_next_input
+from yuxi.modules.agents.services.scheduler import deliver, dispatch_next_input
 from yuxi.modules.agents.services.thread_access import require_thread
 from yuxi.modules.agents.services.turns import cancel_turn
 from yuxi.modules.identity.models import User
 from yuxi.modules.system.options import system_options
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
-from yuxi.modules.workspace.services.bindings import resolve_session_workdir_binding
+from yuxi.modules.workspace.services.bindings import ensure_session_workdir_available, session_workdir_is_available
 from yuxi.shared.datetime import format_utc_datetime, utc_now
 from yuxi.shared.errors import InvalidOperationError, ResourceNotFoundError, StateConflictError
 
@@ -334,6 +334,7 @@ class SessionCooperationService:
         if existing is not None:
             require_receipt_replay(existing, "agent.session.input.message", intent)
             return await self._input_result(target, existing.input_id)
+        await ensure_session_workdir_available(agent_session=target, uid=run.uid, db=self.db)
         frozen = {"runtime": {"tool_call_id": call_id}}
         receipt = await accept_locked(
             db=self.db,
@@ -559,10 +560,9 @@ async def _recover_cooperation_wait(turn_id: str) -> None:
                     continue
                 value["wait_timed_out"] = True
             response[entry["interrupt_id"]] = value
-        if not response:
+        if not response or not await session_workdir_is_available(agent_session=member, db=db):
             return
         previous = await db.get(AgentRun, turn.current_run_id)
-        binding = await resolve_session_workdir_binding(agent_session=member, uid=member.uid, db=db)
         run = await create_resume_run(
             db=db,
             agent_session=member,
@@ -574,7 +574,7 @@ async def _recover_cooperation_wait(turn_id: str) -> None:
         )
         run_id = run.id
 
-    await deliver(Dispatch(run_id=run_id, binding=binding))
+    await deliver(run_id)
 
 
 async def control_tree(*, db, scope: ActorScope, thread_id: str, idempotency_key: str, stopped: bool) -> dict:
@@ -618,6 +618,7 @@ async def control_tree(*, db, scope: ActorScope, thread_id: str, idempotency_key
         return control_accepted(receipt)
     if not stopped:
         await _require_tree_resumable(db=db, member=member)
+        await ensure_session_workdir_available(agent_session=member, uid=scope.uid, db=db)
     await db.execute(
         insert(CooperationRuntime)
         .values(tree_root_thread_id=member.tree_root_thread_id, stopped=stopped)

@@ -3,6 +3,7 @@
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     Column,
     DateTime,
@@ -76,3 +77,15 @@ class WorkspaceRecentFiles(Base):
 
     uid = Column(String(128), ForeignKey("users.uid", ondelete="CASCADE"), primary_key=True)
     entries = Column(JSON_VALUE, nullable=False)
+
+
+class WorkspaceUsage(Base):
+    """用户目录最近一次成功统计的物理用量。"""
+
+    __tablename__ = "workspace_usage"
+    __table_args__ = (CheckConstraint("used_bytes >= 0", name="ck_workspace_usage_nonnegative"),)
+
+    uid = Column(String(128), ForeignKey("users.uid", ondelete="CASCADE"), primary_key=True)
+    used_bytes = Column(BigInteger, nullable=True)
+    measured_at = Column(DateTime(timezone=True), nullable=True)
+    last_attempt_at = Column(DateTime(timezone=True), nullable=False)

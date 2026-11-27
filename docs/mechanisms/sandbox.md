@@ -30,7 +30,9 @@ Container 模式的部署、挂载、资源限制和能力差异见[Container �
 
 `/home/user/workspace` 是当前用户 UserWorkspace 的直接可写持久挂载，`~/workspace` 是同一绝对路径的 Home 缩写。`/home/user/skills` 是获授权共享 Skills 的只读投影。固定路径由 `modules/workspace/runtime_paths.py` 拥有，Cube provider、文件工具、附件、产物与 Viewer 共用此契约。路径没有环境变量覆盖或历史别名。
 
-默认 Project 工作目录位于 Workspace 的 `projects/YYYYMMDD/<六位标识>`，日期使用上海时间，标识取 Project UUID 前六位。路径分配避开用户已有文件和数据库目录绑定，重名按顺序添加 `-1`、`-2` 后缀。目录在数据库绑定提交后物化；已有时间戳目录继续按原绑定访问。手动创建的 linked Project 使用用户选择的现有目录。生成与校验由 `modules/workspace/paths.py` 拥有，取舍见[目录分层决策](../develop-guides/decisions/implemented/2026-10-15-project-workdir-date-layout.md)。
+未选 Project 的新对话在 Workspace 内分配 `agents/tasks/YYYY-MM-DD/<前缀>-<六位标识>`。日期采用上海时间，含汉字、空文本或仅有附件时前缀为 `new-chat`，英文前缀来自首条消息。六位标识来自 Project UUID，路径已被数据库绑定或磁盘条目占用时追加 `-1`、`-2` 等序号。目录随 Project 绑定持久保存，续聊、改标题或跨日打开均沿用原路径。已有 Project 和手动选择的目录继续使用原绑定。详见[工作目录命名决策](../develop-guides/decisions/implemented/2026-11-27-agent-task-workdir.md)。
+
+个人空间可删除对话的工作目录或其上级目录。删除文件后，Project 绑定和对话消息仍可读取。会话打开时检查绑定路径，目录缺失或不可访问时停用发送和恢复执行，并显示原因。后端在执行入口校验同一绑定，托管目录只在新建隐式 Project 时创建。同一路径恢复有效目录后，重新打开原对话即可继续。打开个人空间会初始化默认 `agents/` 目录。直接绑定该路径的 Project 也按路径恢复规则处理。
 
 `runtime/sandbox/backend.py` 保持现有文件和 execute 工具返回协议。`modules/workspace/runtime_files.py` 将共享路径交给宿主文件边界，拒绝 symlink 越界；其他路径通过固定普通账号的受追踪进程访问。Cube v0.7.3 的 HTTP 文件接口不能证明普通用户权限，因此不使用该接口；读写、编辑和搜索均由 VM 内核执行权限边界。模型不能指定执行账号。
 

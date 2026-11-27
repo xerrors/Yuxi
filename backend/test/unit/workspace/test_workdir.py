@@ -1,3 +1,5 @@
+import os
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -27,6 +29,22 @@ def test_open_existing_rejects_missing_workdir(tmp_path: Path, monkeypatch: pyte
         Workdir.open_existing("user-1", "projects/11111111-1111-4111-8111-111111111111")
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="目录权限反例需要非 root 进程")
+@pytest.mark.parametrize("mode", [0o000, 0o400])
+def test_open_existing_requires_directory_permissions(tmp_path, monkeypatch, mode):
+    """叶目录存在但无法打开或查找时，拒绝返回可用 Workdir。"""
+    workspace_root = tmp_path / "workspace"
+    path = workspace_root / "projects/demo"
+    path.mkdir(parents=True)
+    monkeypatch.setattr(workspace_filesystem_module, "user_workspace_dir", lambda _uid: workspace_root)
+    path.chmod(mode)
+    try:
+        with pytest.raises(PermissionError):
+            Workdir.open_existing("user-1", "projects/demo")
+    finally:
+        path.chmod(0o700)
+
+
 def test_open_existing_rejects_regular_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     workdir_path = "projects/11111111-1111-4111-8111-111111111111"
     workspace_root = tmp_path / "workspace"
@@ -49,6 +67,24 @@ def test_open_existing_rejects_symlinked_workdir(tmp_path: Path, monkeypatch: py
 
     with pytest.raises(PermissionError, match="symlink"):
         Workdir.open_existing("user-1", workdir_path)
+
+
+@pytest.mark.asyncio
+async def test_workdir_copy_does_not_recreate_removed_root(workdir, tmp_path):
+    """已经打开的 Workdir 在复制文件或目录之前被删除时，拒绝写入。"""
+    root = tmp_path / "workspace" / workdir.relative_path
+    root.rmdir()
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "file.txt").write_bytes(b"example")
+
+    with pytest.raises(FileNotFoundError):
+        workdir.copy_file_from_path("/nested/file.txt", str(source / "file.txt"))
+    with pytest.raises(FileNotFoundError):
+        workdir.copy_file_from_stream("/nested/file.txt", BytesIO(b"example"), max_bytes=10)
+    with pytest.raises(FileNotFoundError):
+        await workdir.acopy_directory_from_path(source, "/nested/output")
+    assert not root.exists()
 
 
 @pytest.mark.asyncio
@@ -118,10 +154,10 @@ async def test_directory_copy_never_removes_existing_destination(workdir, tmp_pa
     started, release = threading.Event(), threading.Event()
     real_copy = Workspace.copy_authorized_directory_from_path
 
-    def copy(self, *args):
+    def copy(self, *args, **kwargs):
         started.set()
         assert release.wait(5)
-        return real_copy(self, *args)
+        return real_copy(self, *args, **kwargs)
 
     monkeypatch.setattr(Workspace, "copy_authorized_directory_from_path", copy)
     task = asyncio.create_task(workdir.acopy_directory_from_path(source, "/outputs/parsed"))
@@ -198,8 +234,8 @@ async def test_directory_copy_preserves_replacement_directory(workdir, tmp_path,
     if outcome == "cancel":
         real_operation = workspace_filesystem_module.Workspace.copy_authorized_directory_from_path
 
-        def operation(self, *args):
-            identity = real_operation(self, *args)
+        def operation(self, *args, **kwargs):
+            identity = real_operation(self, *args, **kwargs)
             replace_target()
             started.set()
             assert release.wait(5)
