@@ -968,14 +968,23 @@ class MilvusKB(KnowledgeExecutor):
     # ==== 内部辅助：检索过滤与结果装配 ====
 
     async def _build_active_generation_expr(self, kb_id: str) -> str:
-        """先过滤非服务代次，避免不可见候选占满 Milvus top-k。"""
+        """用多数代次加例外文件表达可见范围，避免每个 file_id 都进入 Milvus 过滤式。"""
         grouped: dict[int, list[str]] = {}
         for file_id, generation in await KnowledgeFileRepository().list_active_generations(kb_id):
-            grouped.setdefault(generation, []).append(file_id)
-        return (
-            " or ".join(f"(generation == {generation} and file_id in {json.dumps(file_ids)})" for generation, file_ids in grouped.items())
-            or "file_id in []"
-        )
+            grouped.setdefault(int(generation), []).append(file_id)
+        if not grouped:
+            return "file_id in []"
+        for file_ids in grouped.values():
+            file_ids.sort()
+        majority = min(grouped, key=lambda generation: (-len(grouped[generation]), generation))
+        minority = [(generation, file_ids) for generation, file_ids in sorted(grouped.items()) if generation != majority]
+        if not minority:
+            return f"generation == {majority}"
+        excluded = sorted(file_id for _, file_ids in minority for file_id in file_ids)
+        parts = [f"(generation == {majority} and file_id not in {json.dumps(excluded, ensure_ascii=False)})"]
+        for generation, file_ids in minority:
+            parts.append(f"(generation == {generation} and file_id in {json.dumps(file_ids, ensure_ascii=False)})")
+        return " or ".join(parts)
 
     async def _file_deleted(self, kb_id: str, file_id: str) -> bool:
         """索引写入期间文件被删除时，本次代次不能留下 chunk。"""
